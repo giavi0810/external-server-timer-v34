@@ -43,7 +43,38 @@ class WebhookController extends Controller
                 ], 200);
             }
 
+            // Phase 1 Legacy Ticket Filtering: Ignore tickets created before Go-Live
+            if (env('ENABLE_LEGACY_TICKET_FILTER') && env('GO_LIVE_TIMESTAMP')) {
+                $ticketData = $validated['ticket_data'] ?? [];
+                $ticketCreatedAtRaw = $ticketData['created_at']
+                    ?? $request->input('raw_payload.ticket.created_at')
+                    ?? $request->input('ticket.created_at')
+                    ?? null;
+
+                if ($ticketCreatedAtRaw) {
+                    $ticketCreatedAt = Carbon::parse($ticketCreatedAtRaw);
+                    $goLiveTimestamp = Carbon::parse(env('GO_LIVE_TIMESTAMP'));
+
+                    if ($ticketCreatedAt->lessThan($goLiveTimestamp)) {
+                        Log::info("Webhook Phase 1 Filter: Ignored legacy ticket created before Go-Live", [
+                            'ticket_id' => $ticketId,
+                            'created_at' => $ticketCreatedAt->toIso8601String(),
+                            'go_live_timestamp' => $goLiveTimestamp->toIso8601String(),
+                        ]);
+
+                        return response()->json([
+                            'success' => true,
+                            'ignored' => true,
+                            'reason' => 'legacy_ticket_phase_1',
+                        ], 200);
+                    }
+                }
+            }
+
+
+
             $eventType = $validated['event_type'];
+
             $eventTimestamp = $validated['event_timestamp'];
             $ticketData = $validated['ticket_data'] ?? [];
             $changes = $validated['changes'] ?? [];

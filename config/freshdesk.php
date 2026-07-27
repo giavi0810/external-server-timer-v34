@@ -136,3 +136,4 @@ return [
     'reopen_threshold_minutes' => (int) env('FRESHDESK_REOPEN_THRESHOLD', 1440),
 
 ];
+
