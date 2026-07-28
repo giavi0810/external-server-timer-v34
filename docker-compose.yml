@@ -1,14 +1,16 @@
-version: '3.8'
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
+      target: app
     image: timer-v34-app:latest
     container_name: timer-v34-app
     restart: always
     working_dir: /var/www/html
+    env_file:
+      - path: .env
+        required: false
     environment:
       APP_NAME: ${APP_NAME:-Laravel}
       APP_ENV: ${APP_ENV:-production}
@@ -24,7 +26,7 @@ services:
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
     volumes:
-      - ./:/var/www/html
+      - laravel-v34-storage:/var/www/html/storage
     networks:
       - timer-v34-network
     depends_on:
@@ -32,14 +34,17 @@ services:
       - redis
 
   webserver:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: webserver
+    image: timer-v34-webserver:latest
     container_name: timer-v34-webserver
     restart: always
     ports:
       - "${APP_PORT:-8340}:80"
     volumes:
-      - ./:/var/www/html
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - laravel-v34-storage:/var/www/html/storage:ro
     networks:
       - timer-v34-network
     depends_on:
@@ -76,6 +81,8 @@ networks:
     driver: bridge
 
 volumes:
+  laravel-v34-storage:
+    driver: local
   postgres-v34-data:
     driver: local
   redis-v34-data:
