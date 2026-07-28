@@ -17,6 +17,12 @@ services:
       APP_KEY: ${APP_KEY}
       APP_DEBUG: ${APP_DEBUG:-false}
       APP_URL: ${APP_URL:-http://localhost}
+      LOG_CHANNEL: ${LOG_CHANNEL:-stderr}
+      LOG_STACK: ${LOG_STACK:-stderr}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CACHE_STORE: ${CACHE_STORE:-redis}
+      QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
+      SESSION_DRIVER: ${SESSION_DRIVER:-database}
       DB_CONNECTION: ${DB_CONNECTION:-pgsql}
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
@@ -24,7 +30,15 @@ services:
       DB_USERNAME: ${DB_USERNAME:-timer_user}
       DB_PASSWORD: ${DB_PASSWORD:-timer_password_123}
       REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_PORT: ${REDIS_PORT:-6379}
+      FRESHDESK_DOMAIN: ${FRESHDESK_DOMAIN:-}
+      FRESHDESK_API_KEY: ${FRESHDESK_API_KEY:-}
+      FRESHDESK_WEBHOOK_USER: ${FRESHDESK_WEBHOOK_USER:-admin}
+      FRESHDESK_WEBHOOK_PASSWORD: ${FRESHDESK_WEBHOOK_PASSWORD:-}
+      FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
+      ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
+      GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
     volumes:
       - laravel-v34-storage:/var/www/html/storage
     networks:
@@ -49,6 +63,63 @@ services:
       - timer-v34-network
     depends_on:
       - app
+
+  queue-worker:
+    image: timer-v34-app:latest
+    container_name: timer-v34-queue-worker
+    restart: always
+    profiles:
+      - workers
+    working_dir: /var/www/html
+    command:
+      - php
+      - artisan
+      - queue:work
+      - redis
+      - --queue=default
+      - --sleep=1
+      - --tries=4
+      - --backoff=15,30,60
+      - --timeout=105
+      - --max-time=3600
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_NAME: ${APP_NAME:-Laravel}
+      APP_ENV: ${APP_ENV:-production}
+      APP_KEY: ${APP_KEY}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:-http://localhost}
+      LOG_CHANNEL: ${LOG_CHANNEL:-stderr}
+      LOG_STACK: ${LOG_STACK:-stderr}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CACHE_STORE: ${CACHE_STORE:-redis}
+      QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
+      SESSION_DRIVER: ${SESSION_DRIVER:-database}
+      DB_CONNECTION: ${DB_CONNECTION:-pgsql}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_DATABASE: ${DB_DATABASE:-timer_v34_db}
+      DB_USERNAME: ${DB_USERNAME:-timer_user}
+      DB_PASSWORD: ${DB_PASSWORD:-timer_password_123}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      FRESHDESK_DOMAIN: ${FRESHDESK_DOMAIN:-}
+      FRESHDESK_API_KEY: ${FRESHDESK_API_KEY:-}
+      FRESHDESK_WEBHOOK_USER: ${FRESHDESK_WEBHOOK_USER:-admin}
+      FRESHDESK_WEBHOOK_PASSWORD: ${FRESHDESK_WEBHOOK_PASSWORD:-}
+      FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
+      ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
+      GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
+    volumes:
+      - laravel-v34-storage:/var/www/html/storage
+    networks:
+      - timer-v34-network
+    depends_on:
+      - postgres
+      - redis
 
   postgres:
     image: postgres:16-alpine

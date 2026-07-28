@@ -52,7 +52,8 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
             Log::info('Ticket is already being processed, dispatching delayed retry job', [
                 'ticket_id' => $this->ticketId,
             ]);
-            self::dispatch($this->ticketId, $this->isRecoveryDispatch)->delay(now()->addSeconds(5));
+            self::dispatch($this->ticketId, $this->isRecoveryDispatch, $this->replayAll)
+                ->delay(now()->addSeconds(5));
             return;
         }
 

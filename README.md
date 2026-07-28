@@ -7,6 +7,37 @@
 <a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
 </p>
 
+## Vận hành queue v34
+
+Queue worker được đặt trong profile `workers` để `docker compose up` thông thường
+không vô tình xử lý backlog. Trước khi bật worker, cần kiểm kê các job đang chờ
+và đánh giá tác động cập nhật ngược về Freshdesk.
+
+```bash
+docker exec timer-v34-redis redis-cli ZCARD laravel-database-queues:default:delayed
+docker compose --profile workers up -d queue-worker
+```
+
+Môi trường triển khai phải dùng `APP_ENV=production` và `APP_DEBUG=false` để API
+không trả stack trace cho phía gửi webhook.
+
+### Production / Dockhand
+
+`docker-compose.yml` đóng source vào image, giữ `storage` trong named volume và
+mặc định gửi Laravel log ra `stderr` để nền tảng thu thập được Active Logs.
+
+### Local
+
+Local dùng file override để bind mount source và `storage` từ Windows:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+```
+
+Khi dùng override, Laravel ghi đồng thời vào `storage/logs/laravel.log` trên máy
+và `docker logs timer-v34-app`. Queue worker vẫn không chạy nếu chưa bật profile
+`workers`.
+
 ## About Laravel
 
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:

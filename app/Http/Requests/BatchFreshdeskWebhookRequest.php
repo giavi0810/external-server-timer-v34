@@ -28,6 +28,8 @@ class BatchFreshdeskWebhookRequest extends FormRequest
             'events.*.changes' => ['nullable', 'array'],
             'events.*.conversation_data' => ['nullable', 'array'],
             'events.*.raw_payload' => ['nullable', 'array'],
+            'events.*.raw_payload.ticket' => ['nullable', 'array'],
+            'events.*.ticket' => ['nullable', 'array'],
         ];
     }
 

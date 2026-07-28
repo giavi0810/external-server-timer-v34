@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\InvalidWebhookPayloadException;
 use App\Jobs\ProcessTicketEventJob;
 use App\Models\FreshdeskGroup;
 use App\Models\TicketEvent;
 use App\Models\Ticket;
 use App\Services\FreshdeskApiService;
 use App\Services\Sla\BatchTicketEventService;
+use App\Services\Webhooks\FreshdeskEventNormalizer;
 use App\Http\Requests\BatchFreshdeskWebhookRequest;
 use App\Http\Requests\FreshdeskWebhookRequest;
 use Carbon\Carbon;
@@ -15,14 +17,14 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class WebhookController extends Controller
 {
-    protected FreshdeskApiService $freshdeskService;
-
-    public function __construct(FreshdeskApiService $freshdeskService)
-    {
-        $this->freshdeskService = $freshdeskService;
+    public function __construct(
+        protected FreshdeskApiService $freshdeskService,
+        protected FreshdeskEventNormalizer $eventNormalizer
+    ) {
     }
 
     /**
@@ -30,9 +32,11 @@ class WebhookController extends Controller
      */
     public function handleFreshdeskTicketEvent(FreshdeskWebhookRequest $request): JsonResponse
     {
+        $correlationId = $this->resolveCorrelationId($request->header('X-Correlation-ID'));
+
         try {
             $validated = $request->validated();
-            $ticketId = $validated['ticket_id'];
+            $ticketId = (int) $validated['ticket_id'];
 
             if (Cache::has("migration_lock_{$ticketId}")) {
                 Log::info("Migration Lock: Webhook ignored for ticket {$ticketId}");
@@ -72,17 +76,17 @@ class WebhookController extends Controller
             }
 
 
-            $eventType = $validated['event_type'];
-
-            $eventTimestamp = $validated['event_timestamp'];
-            $ticketData = $validated['ticket_data'] ?? [];
-            $changes = $validated['changes'] ?? [];
-
-            if (in_array($eventType, [TicketEvent::EVENT_AGENT_REPLIED, TicketEvent::EVENT_REQUESTER_REPLIED]) && !empty($validated['conversation_data']['updated_at'])) {
-                $eventTimestamp = Carbon::parse($validated['conversation_data']['updated_at'])->toISOString();
-            } elseif (!empty($ticketData['updated_at'])) {
-                $eventTimestamp = Carbon::parse($ticketData['updated_at'])->toISOString();
-            }
+            $normalizedEvent = $this->eventNormalizer->normalize(array_merge(
+                $validated,
+                ['ticket' => $request->input('ticket')]
+            ));
+            $eventType = $normalizedEvent['event_type'];
+            $eventTimestamp = $normalizedEvent['event_timestamp'];
+            $ticketData = $normalizedEvent['ticket_data'];
+            $changes = $normalizedEvent['changes'];
+            $hasIncomingTicketData = $request->has('ticket_data')
+                || $request->has('raw_payload.ticket')
+                || $request->has('ticket');
 
             if (!TicketEvent::isSupportedType($eventType)) {
                 Log::info("Webhook ignored: unsupported event type", [
@@ -118,14 +122,7 @@ class WebhookController extends Controller
             }
 
             $status = $ticketData['status'] ?? null;
-            if (is_numeric($status)) {
-                $status = config("freshdesk.status_map.{$status}", $status);
-            }
-
             $priority = $ticketData['priority'] ?? null;
-            if (is_numeric($priority)) {
-                $priority = config("freshdesk.priority_map.{$priority}", $priority);
-            }
 
             $groupId = $this->normalizeGroupIdValue(
                 $ticketData['group_id'] ?? $this->freshdeskService->resolveGroupId($ticketData['group_name'] ?? null)
@@ -138,35 +135,14 @@ class WebhookController extends Controller
 
 
 
-            Log::debug("WebhookController: Raw Payload Received", [
+            Log::debug("WebhookController: Payload received", [
                 'ticket_id' => $ticketId,
                 'event_type' => $eventType,
-                'payload' => $request->all()
+                'correlation_id' => $correlationId,
+                'top_level_keys' => array_keys($request->all()),
             ]);
 
-            $allCf = $request->input('raw_payload.ticket.custom_fields')
-                ?? $request->input('raw_payload.custom_fields')
-                ?? $request->input('ticket_data.custom_fields')
-                ?? $request->input('ticket.custom_fields')
-                ?? $ticketData['custom_fields']
-                ?? [];
-
-            $whitelistKeys = [
-                'cf_sla_mode',
-                'cf_number_of_due_date_changes',
-                'cf_processing_phase',
-                'cf_change_due_reason'
-            ];
-
-            $cf = [];
-            foreach ($allCf as $key => $value) {
-                foreach ($whitelistKeys as $whiteKey) {
-                    if (str_starts_with($key, $whiteKey)) {
-                        $cf[$key] = $value;
-                        break;
-                    }
-                }
-            }
+            $cf = $ticketData['custom_fields'] ?? [];
 
             $slaModeFromWebhook = null;
             foreach ($cf as $k => $v) {
@@ -186,7 +162,7 @@ class WebhookController extends Controller
                 ]);
             }
 
-            if (!empty($validated['ticket_data'])) {
+            if ($hasIncomingTicketData && !empty($ticketData)) {
                 $ticketUpdateData = [
                     'subject' => $ticketData['subject'] ?? null,
                     'status' => $status ?? 'Open',
@@ -219,11 +195,14 @@ class WebhookController extends Controller
                 ]);
             }
 
-            Log::info("WebhookController: Ticket State Saved", [
-                'ticket_id' => $ticket->ticket_id,
-                'sla_mode' => $ticket->getOrCreateTtrMetric()->sla_mode,
-                'priority' => $ticket->priority
-            ]);
+            if ($ticket) {
+                Log::info("WebhookController: Ticket State Saved", [
+                    'ticket_id' => $ticket->ticket_id,
+                    'sla_mode' => $ticket->getOrCreateTtrMetric()->sla_mode,
+                    'priority' => $ticket->priority
+                ]);
+            }
+
 
             $normalizedChanges = [];
 
@@ -278,10 +257,10 @@ class WebhookController extends Controller
                 'group_name' => $groupName,
                 'requester_id' => $ticketData['requester_id'] ?? $ticket?->requester_id ?? $validated['conversation_data']['actor_id'] ?? null,
                 'custom_fields' => $cf,
-                'agent_reply_count' => $validated['raw_payload']['ticket']['agent_reply_count'] ?? null,
-                'customer_reply_count' => $validated['raw_payload']['ticket']['customer_reply_count'] ?? null,
-                'agent_responded_at' => $validated['raw_payload']['ticket']['agent_responded_at'] ?? null,
-                'requester_responded_at' => $validated['raw_payload']['ticket']['requester_responded_at'] ?? null,
+                'agent_reply_count' => $normalizedEvent['raw_payload']['ticket']['agent_reply_count'] ?? null,
+                'customer_reply_count' => $normalizedEvent['raw_payload']['ticket']['customer_reply_count'] ?? null,
+                'agent_responded_at' => $normalizedEvent['raw_payload']['ticket']['agent_responded_at'] ?? null,
+                'requester_responded_at' => $normalizedEvent['raw_payload']['ticket']['requester_responded_at'] ?? null,
             ]);
 
             $eventDataPayload = ['ticket_data' => $enrichedTicketData];
@@ -334,15 +313,33 @@ class WebhookController extends Controller
                 'event_id' => $event->id,
             ], 200);
 
-        } catch (\Exception $e) {
+        } catch (InvalidWebhookPayloadException $exception) {
+            Log::warning('Webhook payload rejected', [
+                'ticket_id' => $request->integer('ticket_id') ?: null,
+                'correlation_id' => $correlationId,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid webhook payload',
+                'reason' => $exception->getMessage(),
+                'correlation_id' => $correlationId,
+            ], 422);
+        } catch (\Throwable $e) {
             Log::error("Webhook processing error", [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'exception_class' => $e::class,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'ticket_id' => $request->integer('ticket_id') ?: null,
+                'correlation_id' => $correlationId,
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Internal server error',
+                'correlation_id' => $correlationId,
             ], 500);
         }
     }
@@ -544,27 +541,69 @@ class WebhookController extends Controller
         return $normalizedValue === '' ? null : $normalizedValue;
     }
 
+    protected function resolveCorrelationId(?string $candidate): string
+    {
+        if ($candidate !== null && preg_match('/^[A-Za-z0-9._:-]{1,100}$/', $candidate) === 1) {
+            return $candidate;
+        }
+
+        return (string) Str::uuid();
+    }
+
     public function handleBatchEvents(
         BatchFreshdeskWebhookRequest $request,
         BatchTicketEventService $batchService
     ): JsonResponse
     {
+        $correlationId = $this->resolveCorrelationId($request->header('X-Correlation-ID'));
+
         try {
             $result = $batchService->ingest($request->validated('events'));
 
+            foreach ($result['results'] as $itemResult) {
+                if (($itemResult['status'] ?? null) !== 'rejected') {
+                    continue;
+                }
+
+                Log::warning('Batch recovery record rejected', [
+                    'recovery_id' => $itemResult['recovery_id'] ?? null,
+                    'reason' => $itemResult['reason'] ?? 'unknown',
+                    'correlation_id' => $correlationId,
+                ]);
+            }
+
             return response()->json([
                 'success' => true,
+                'correlation_id' => $correlationId,
                 'message' => 'Batch sự kiện đã được tiếp nhận.',
                 'data' => $result,
             ], 202);
-        } catch (\Throwable $exception) {
-            Log::error('Batch webhook ingestion failed', [
+        } catch (InvalidWebhookPayloadException $exception) {
+            Log::warning('Batch webhook payload rejected', [
                 'events_count' => count($request->validated('events')),
-                'error' => $exception->getMessage(),
+                'reason' => $exception->getMessage(),
+                'correlation_id' => $correlationId,
             ]);
 
             return response()->json([
                 'success' => false,
+                'message' => 'Dữ liệu batch không hợp lệ.',
+                'reason' => $exception->getMessage(),
+                'correlation_id' => $correlationId,
+            ], 422);
+        } catch (\Throwable $exception) {
+            Log::error('Batch webhook ingestion failed', [
+                'events_count' => count($request->validated('events')),
+                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
+                'correlation_id' => $correlationId,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'correlation_id' => $correlationId,
                 'message' => 'Không thể tiếp nhận batch sự kiện.',
             ], 500);
         }
