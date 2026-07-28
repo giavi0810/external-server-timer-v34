@@ -18,9 +18,9 @@ use Illuminate\Support\Facades\Log;
 
 class WebhookController extends Controller
 {
-    protected ?FreshdeskApiService $freshdeskService;
+    protected FreshdeskApiService $freshdeskService;
 
-    public function __construct(?FreshdeskApiService $freshdeskService = null)
+    public function __construct(FreshdeskApiService $freshdeskService)
     {
         $this->freshdeskService = $freshdeskService;
     }
@@ -72,7 +72,6 @@ class WebhookController extends Controller
             }
 
 
-
             $eventType = $validated['event_type'];
 
             $eventTimestamp = $validated['event_timestamp'];
@@ -111,7 +110,7 @@ class WebhookController extends Controller
                     'priority' => $ticket->priority,
                     'ticket_type' => $ticket->ticket_type,
                     'group_id' => $ticket->group_id,
-                    'group_name' => $this->freshdeskService?->resolveGroupName($ticket->group_id),
+                    'group_name' => $this->freshdeskService->resolveGroupName($ticket->group_id),
                     'requester_id' => $ticket->requester_id,
                     'created_at' => $ticket->fd_created_at,
                     'updated_at' => Carbon::parse($eventTimestamp)->toISOString(),
@@ -129,24 +128,15 @@ class WebhookController extends Controller
             }
 
             $groupId = $this->normalizeGroupIdValue(
-                $ticketData['group_id'] ?? $this->freshdeskService?->resolveGroupId($ticketData['group_name'] ?? null)
+                $ticketData['group_id'] ?? $this->freshdeskService->resolveGroupId($ticketData['group_name'] ?? null)
             );
             $groupName = $ticketData['group_name'] ?? null;
 
-            if (!$groupName && $groupId) {
-                $groupName = $this->freshdeskService?->resolveGroupName($groupId);
+            if ($groupId && !$groupName) {
+                $groupName = $this->freshdeskService->resolveGroupName($groupId);
             }
 
-            if ($groupId) {
-                FreshdeskGroup::updateOrCreate(
-                    ['group_id' => $groupId],
-                    [
-                        'name' => $groupName ?: "Freshdesk Group {$groupId}",
-                        'main_layer' => config("freshdesk.group_layers.{$groupName}", 'L1'),
-                        'is_active' => true,
-                    ]
-                );
-            }
+
 
             Log::debug("WebhookController: Raw Payload Received", [
                 'ticket_id' => $ticketId,

@@ -2,36 +2,22 @@
 
 namespace Database\Seeders;
 
+use App\Services\FreshdeskApiService;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class FreshdeskGroupSeeder extends Seeder
 {
-    public function run(): void
+    public function run(FreshdeskApiService $freshdeskApiService): void
     {
-        $mapping = config('freshdesk.group_mapping', []);
-        $layers = config('freshdesk.group_layers', []);
-        $defaultAssigned = false;
-
-        foreach ($mapping as $groupId => $name) {
-            $layer = $layers[$name] ?? null;
-            if (!in_array($layer, ['L1', 'L2', 'L3', 'L4'], true)) {
-                continue;
-            }
-
-            $isDefault = !$defaultAssigned && $layer === 'L1';
-            DB::table('freshdesk_groups')->updateOrInsert(
-                ['group_id' => (string) $groupId],
-                [
-                    'name' => $name,
-                    'main_layer' => $layer,
-                    'is_active' => true,
-                    'is_default_assignment' => $isDefault,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]
-            );
-            $defaultAssigned = $defaultAssigned || $isDefault;
+        try {
+            $freshdeskApiService->refreshGroupMappings();
+        } catch (Throwable $e) {
+            Log::warning('FreshdeskGroupSeeder: Failed to fetch groups from Freshdesk API during seed', [
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 }
+

@@ -17,8 +17,8 @@ class FreshdeskApiService
 
     public function __construct()
     {
-        $this->domain = config('freshdesk.domain', '');
-        $this->apiKey = config('freshdesk.api_key', '');
+        $this->domain = config('freshdesk.domain') ?: env('FRESHDESK_DOMAIN', '');
+        $this->apiKey = config('freshdesk.api_key') ?: env('FRESHDESK_API_KEY', '');
     }
 
     /**
@@ -31,9 +31,9 @@ class FreshdeskApiService
             return null;
         }
 
-        // 1. Check DB cache first
+        // 1. Check DB cache first (skip if cached name is temporary "Freshdesk Group ...")
         $fdGroup = FreshdeskGroup::where('group_id', $groupId)->first();
-        if ($fdGroup) {
+        if ($fdGroup && !empty($fdGroup->name) && !str_starts_with($fdGroup->name, 'Freshdesk Group ')) {
             return $fdGroup->name;
         }
 
@@ -42,13 +42,18 @@ class FreshdeskApiService
             return $mappedName;
         }
 
+        Log::info("FreshdeskApiService: Group ID {$groupId} has no real name in DB. Triggering API refresh...", [
+            'group_id' => $groupId,
+            'existing_name_in_db' => $fdGroup?->name,
+        ]);
+
         // 2. Try refreshing from Freshdesk API
         try {
             $this->refreshGroupMappings();
 
             // 3. Check DB again after refresh
             $fdGroup = FreshdeskGroup::where('group_id', $groupId)->first();
-            if ($fdGroup) {
+            if ($fdGroup && !empty($fdGroup->name) && !str_starts_with($fdGroup->name, 'Freshdesk Group ')) {
                 return $fdGroup->name;
             }
         } catch (\Exception $e) {
@@ -62,6 +67,7 @@ class FreshdeskApiService
         return (string) $groupId;
     }
 
+
     /**
      * Resolve group ID from group name.
      * Priority: DB cache -> config fallback -> parse fallback name -> API refresh -> DB retry.
@@ -73,36 +79,32 @@ class FreshdeskApiService
         }
 
         $normalizedGroupName = trim((string) $groupName);
-        if ($normalizedGroupName === '') {
-            return null;
-        }
-
         $fdGroup = FreshdeskGroup::where('name', $normalizedGroupName)->first();
-        if ($fdGroup && $fdGroup->group_id) {
-            return (string) $fdGroup->group_id;
+        if ($fdGroup) {
+            return $fdGroup->group_id;
         }
 
-        foreach (config('freshdesk.group_mapping', []) as $mappedGroupId => $mappedGroupName) {
-            if (strcasecmp((string) $mappedGroupName, $normalizedGroupName) === 0) {
-                return (string) $mappedGroupId;
+        $configMappings = config('freshdesk.group_mapping', []);
+        foreach ($configMappings as $id => $name) {
+            if (strcasecmp((string) $name, $normalizedGroupName) === 0) {
+                return (string) $id;
             }
         }
 
-        if (preg_match('/^Group\s+([A-Za-z0-9_-]+)$/i', $normalizedGroupName, $matches)) {
-            return (string) $matches[1];
+        if (preg_match('/^Freshdesk Group (\d+)$/i', $normalizedGroupName, $matches)) {
+            return $matches[1];
         }
 
         try {
             $this->refreshGroupMappings();
-
             $fdGroup = FreshdeskGroup::where('name', $normalizedGroupName)->first();
-            if ($fdGroup && $fdGroup->group_id) {
-                return (string) $fdGroup->group_id;
+            if ($fdGroup) {
+                return $fdGroup->group_id;
             }
         } catch (\Exception $e) {
-            Log::warning("Failed to refresh group mappings from Freshdesk API", [
+            Log::warning("Failed to refresh group mappings when resolving group ID", [
                 'error' => $e->getMessage(),
-                'group_name' => $normalizedGroupName,
+                'group_name' => $groupName,
             ]);
         }
 
@@ -116,32 +118,45 @@ class FreshdeskApiService
     public function refreshGroupMappings(): void
     {
         if (empty($this->domain) || empty($this->apiKey)) {
-            Log::warning('Freshdesk API credentials not configured, skipping group refresh');
+            Log::warning('Freshdesk API credentials not configured, skipping group refresh', [
+                'domain' => $this->domain,
+                'has_api_key' => !empty($this->apiKey),
+            ]);
             return;
         }
 
         $url = "https://{$this->domain}/api/v2/ticket_fields?type=default_group";
+
+        Log::info("FreshdeskApiService: Calling API to refresh groups", ['url' => $url]);
 
         $response = Http::withBasicAuth($this->apiKey, 'X')
             ->timeout(30)
             ->get($url);
 
         if (!$response->successful()) {
-            Log::error("Freshdesk API request failed", [
-                'url'    => $url,
+            Log::error("Freshdesk ticket_fields API request failed", [
+                'url' => $url,
                 'status' => $response->status(),
-                'body'   => $response->body(),
+                'body' => Str::limit($response->body(), 300),
             ]);
             return;
         }
 
         $fields = $response->json();
-        $groupFieldFound = false;
+        if (!is_array($fields)) {
+            Log::warning("Freshdesk ticket_fields API returned unexpected response format");
+            return;
+        }
 
         foreach ($fields as $field) {
             if (isset($field['name']) && $field['name'] === 'group') {
-                $groupFieldFound = true;
                 $choices = is_array($field['choices'] ?? null) ? $field['choices'] : [];
+
+                if (empty($choices)) {
+                    Log::warning("Freshdesk group field choices is empty");
+                    return;
+                }
+
                 $activeGroupIds = [];
 
                 DB::transaction(function () use ($choices, &$activeGroupIds): void {
@@ -159,33 +174,31 @@ class FreshdeskApiService
                         );
                     }
 
-                    $missingGroups = FreshdeskGroup::query()->active();
-
+                    // Mark missing groups as inactive on Freshdesk (preserve historical records)
                     if (!empty($activeGroupIds)) {
-                        $missingGroups->whereNotIn('group_id', $activeGroupIds);
+                        FreshdeskGroup::query()
+                            ->where('is_active', true)
+                            ->whereNotIn('group_id', $activeGroupIds)
+                            ->update([
+                                'is_active' => false,
+                                'is_default_assignment' => false,
+                                'updated_at' => now(),
+                            ]);
                     }
-
-                    $missingGroups->update([
-                        'is_active' => false,
-                        'is_default_assignment' => false,
-                        'updated_at' => now(),
-                    ]);
                 });
 
-                Log::info("Group mappings refreshed from Freshdesk API", [
+                Log::info("Group mappings successfully refreshed from Freshdesk API", [
                     'count' => count($choices),
-                    'inactive_count' => FreshdeskGroup::inactive()->count(),
+                    'active_count' => count($activeGroupIds),
+                    'inactive_count' => FreshdeskGroup::where('is_active', false)->count(),
                 ]);
                 break;
             }
         }
-
-        if (!$groupFieldFound) {
-            Log::warning('Freshdesk group field not found while refreshing group mappings', [
-                'url' => $url,
-            ]);
-        }
     }
+
+
+
 
     /**
      * Auto-detect main layer from group name.
@@ -194,10 +207,14 @@ class FreshdeskApiService
     {
         $name = strtolower($groupName);
 
-        if (str_contains($name, 'l1') || str_contains($name, 'layer 1')) return 'L1';
-        if (str_contains($name, 'l2') || str_contains($name, 'layer 2')) return 'L2';
-        if (str_contains($name, 'l3') || str_contains($name, 'layer 3')) return 'L3';
-        if (str_contains($name, 'l4') || str_contains($name, 'layer 4')) return 'L4';
+        if (str_contains($name, 'l1') || str_contains($name, 'layer 1'))
+            return 'L1';
+        if (str_contains($name, 'l2') || str_contains($name, 'layer 2'))
+            return 'L2';
+        if (str_contains($name, 'l3') || str_contains($name, 'layer 3'))
+            return 'L3';
+        if (str_contains($name, 'l4') || str_contains($name, 'layer 4'))
+            return 'L4';
 
         return 'L1';
     }
@@ -222,8 +239,8 @@ class FreshdeskApiService
 
         Log::error("Failed to fetch ticket from Freshdesk", [
             'ticket_id' => $ticketId,
-            'status'    => $response->status(),
-            'body'      => $response->body(),
+            'status' => $response->status(),
+            'body' => $response->body(),
         ]);
 
         return null;
@@ -271,7 +288,7 @@ class FreshdeskApiService
 
         Log::error("Failed to create ticket on Freshdesk", [
             'status' => $response->status(),
-            'body'   => Str::limit($response->body(), 400),
+            'body' => Str::limit($response->body(), 400),
         ]);
 
         return null;
@@ -309,7 +326,7 @@ class FreshdeskApiService
 
         Log::error("Failed to add note to ticket {$ticketId}", [
             'status' => $response->status(),
-            'body'   => Str::limit($response->body(), 400),
+            'body' => Str::limit($response->body(), 400),
         ]);
 
         return false;
@@ -414,12 +431,12 @@ class FreshdeskApiService
                 ->put($url, $payload);
         } catch (\Throwable $exception) {
             $this->lastErrorContext = [
-                'provider'  => 'freshdesk',
-                'action'    => 'update_ticket',
+                'provider' => 'freshdesk',
+                'action' => 'update_ticket',
                 'ticket_id' => $ticketId,
-                'url'       => $url,
-                'error'     => $exception->getMessage(),
-                'reason'    => 'network_exception',
+                'url' => $url,
+                'error' => $exception->getMessage(),
+                'reason' => 'network_exception',
                 'retryable' => true,
             ];
 
@@ -433,16 +450,16 @@ class FreshdeskApiService
         }
 
         $this->lastErrorContext = [
-            'provider'  => 'freshdesk',
-            'action'    => 'update_ticket',
+            'provider' => 'freshdesk',
+            'action' => 'update_ticket',
             'ticket_id' => $ticketId,
-            'url'       => $url,
-            'status'    => $response->status(),
-            'reason'    => $this->mapStatusToReason($response->status()),
+            'url' => $url,
+            'status' => $response->status(),
+            'reason' => $this->mapStatusToReason($response->status()),
             'retryable' => $this->isRetryableStatus($response->status()),
             'error_hint' => $this->extractErrorHint($response),
             'retry_after' => $response->header('Retry-After'),
-            'body'      => Str::limit($response->body(), 400),
+            'body' => Str::limit($response->body(), 400),
         ];
 
         Log::error("Failed to update ticket on Freshdesk", $this->lastErrorContext);
