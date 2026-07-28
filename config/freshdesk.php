@@ -29,10 +29,7 @@ return [
     */
 
     'group_mapping' => [
-        1 => 'Group L1',
-        2 => 'Group L2',
-        3 => 'Group L3',
-        4 => 'Group L4',
+        // Automatically populated from Freshdesk API (php artisan freshdesk:sync-groups)
     ],
 
     /*
@@ -42,11 +39,9 @@ return [
     */
 
     'group_layers' => [
-        'Group L1' => 'L1',
-        'Group L2' => 'L2',
-        'Group L3' => 'L3',
-        'Group L4' => 'L4',
+        // Auto-detected dynamically (L1, L2, L3, L4)
     ],
+
 
     /*
     |--------------------------------------------------------------------------
