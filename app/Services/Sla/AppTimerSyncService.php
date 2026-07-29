@@ -196,11 +196,6 @@ class AppTimerSyncService
                 'us' => max(0, (int) $rtMetric->used_seconds) * 1000,
                 'rs' => $rtMetric->started_at ? $rtMetric->started_at->toIso8601ZuluString() : null,
             ],
-            'fr' => [
-                'at' => max(0, $rtMetric->total_seconds ?? 0) * 1000,
-                'us' => max(0, (int) $rtMetric->used_seconds) * 1000,
-                're' => max(0, ((int) $rtMetric->total_seconds - (int) $rtMetric->used_seconds)) * 1000,
-            ],
             'rs' => [
                 'us' => $currentResoSeconds * 1000,
                 'rs' => $statusMetric->resolution_started_at ? $statusMetric->resolution_started_at->toIso8601ZuluString() : null,
