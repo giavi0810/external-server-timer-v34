@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 
 class FreshdeskWebhookRequest extends FormRequest
 {
@@ -24,16 +26,18 @@ class FreshdeskWebhookRequest extends FormRequest
             'changes' => 'nullable|array',
             'conversation_data' => 'nullable|array',
             'raw_payload' => 'nullable|array',
+            'raw_payload.ticket' => 'nullable|array',
+            'ticket' => 'nullable|array',
         ];
     }
 
-    protected function failedValidation(\Illuminate\Contracts\Validation\Validator $validator)
+    protected function failedValidation(Validator $validator): void
     {
         \Illuminate\Support\Facades\Log::warning("Webhook validation failed", [
             'errors' => $validator->errors(),
         ]);
 
-        throw new \Illuminate\Validation\ValidationException($validator, response()->json([
+        throw new HttpResponseException(response()->json([
             'success' => false,
             'message' => 'Validation failed',
             'errors' => $validator->errors(),

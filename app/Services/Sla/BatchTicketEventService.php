@@ -6,11 +6,17 @@ use App\Jobs\ProcessTicketEventJob;
 use App\Models\FreshdeskGroup;
 use App\Models\Ticket;
 use App\Models\TicketEvent;
+use App\Services\Webhooks\FreshdeskEventNormalizer;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class BatchTicketEventService
 {
+    public function __construct(
+        private readonly FreshdeskEventNormalizer $eventNormalizer
+    ) {
+    }
+
     public function ingest(array $events): array
     {
         $indexedEvents = collect($events)
@@ -64,7 +70,7 @@ class BatchTicketEventService
     private function ingestTicketEvents(int $ticketId, array $items): array
     {
         $normalizedItems = array_map(function (array $item): array {
-            $item['event'] = $this->normalizeEvent($item['event']);
+            $item['event'] = $this->eventNormalizer->normalize($item['event']);
             return $item;
         }, $items);
 
@@ -151,53 +157,6 @@ class BatchTicketEventService
         ];
     }
 
-    private function normalizeEvent(array $event): array
-    {
-        $ticketData = $event['ticket_data'] ?? [];
-        $eventType = $event['event_type'];
-        $eventTimestamp = $event['event_timestamp'];
-
-        if (in_array($eventType, [TicketEvent::EVENT_AGENT_REPLIED, TicketEvent::EVENT_REQUESTER_REPLIED], true)
-            && !empty($event['conversation_data']['updated_at'])) {
-            $eventTimestamp = $event['conversation_data']['updated_at'];
-        } elseif (!empty($ticketData['updated_at'])) {
-            $eventTimestamp = $ticketData['updated_at'];
-        }
-
-        $ticketData['status'] = $this->normalizeStatus($ticketData['status'] ?? null);
-        $ticketData['priority'] = $this->normalizePriority($ticketData['priority'] ?? null);
-        if (array_key_exists('group_id', $ticketData) && $ticketData['group_id'] !== null) {
-            $ticketData['group_id'] = (string) $ticketData['group_id'];
-        }
-
-        $changes = array_map(function (array $change): array {
-            $field = $change['field'] ?? null;
-            if ($field === 'status_details') {
-                $field = 'status';
-                $change['old_value'] = $change['old_status_name'] ?? $this->extractChangeValue($change['old_value'] ?? null);
-                $change['new_value'] = $change['new_status_name'] ?? $this->extractChangeValue($change['new_value'] ?? null);
-            }
-            if ($field === 'status') {
-                $change['old_value'] = $this->normalizeStatus($change['old_value'] ?? null);
-                $change['new_value'] = $this->normalizeStatus($change['new_value'] ?? null);
-            } elseif ($field === 'priority') {
-                $change['old_value'] = $this->normalizePriority($change['old_value'] ?? null);
-                $change['new_value'] = $this->normalizePriority($change['new_value'] ?? null);
-            } elseif ($field === 'group_id') {
-                $change['old_value'] = isset($change['old_value']) ? (string) $change['old_value'] : null;
-                $change['new_value'] = isset($change['new_value']) ? (string) $change['new_value'] : null;
-            }
-            $change['field'] = $field;
-            return $change;
-        }, $event['changes'] ?? []);
-
-        return array_merge($event, [
-            'ticket_data' => $ticketData,
-            'changes' => $changes,
-            'event_timestamp' => Carbon::parse($eventTimestamp)->toISOString(),
-        ]);
-    }
-
     private function createTicketFromEvent(int $ticketId, array $event): Ticket
     {
         $data = $event['ticket_data'] ?? [];
@@ -219,23 +178,6 @@ class BatchTicketEventService
             'requester_id' => $data['requester_id'] ?? null,
             'fd_created_at' => $data['created_at'] ?? $event['event_timestamp'],
         ]);
-    }
-
-    private function normalizeStatus(mixed $value): mixed
-    {
-        $value = $this->extractChangeValue($value);
-        return is_numeric($value) ? config("freshdesk.status_map.{$value}", $value) : $value;
-    }
-
-    private function normalizePriority(mixed $value): mixed
-    {
-        $value = $this->extractChangeValue($value);
-        return is_numeric($value) ? config("freshdesk.priority_map.{$value}", $value) : $value;
-    }
-
-    private function extractChangeValue(mixed $value): mixed
-    {
-        return is_array($value) ? ($value['name'] ?? $value['id'] ?? null) : $value;
     }
 
     private function result(array $item, string $status, ?string $idempotencyKey, ?string $reason = null): array
