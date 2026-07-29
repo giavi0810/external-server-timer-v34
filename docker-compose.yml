@@ -68,8 +68,6 @@ services:
     image: timer-v34-app:latest
     container_name: timer-v34-queue-worker
     restart: always
-    profiles:
-      - workers
     working_dir: /var/www/html
     command:
       - php
