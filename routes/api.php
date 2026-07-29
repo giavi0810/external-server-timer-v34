@@ -1,10 +1,14 @@
 <?php
 
+use App\Http\Controllers\HealthCheckController;
 use App\Http\Controllers\SlaPolicyController;
 use App\Http\Controllers\WebhookController;
 use App\Models\FreshdeskGroup;
 use App\Services\FreshdeskApiService;
 use Illuminate\Support\Facades\Route;
+
+Route::get('/health', [HealthCheckController::class, 'check']);
+Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
 
 Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
     Route::post('/freshdesk', [WebhookController::class, 'handleFreshdeskTicketEvent']);

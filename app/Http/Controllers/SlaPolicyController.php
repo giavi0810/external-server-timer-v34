@@ -35,8 +35,8 @@ class SlaPolicyController extends Controller
         $policies = SlaPolicy::query()
             ->joinSub($latestVersions, 'latest', function ($join) {
                 $join->on('sla_policies.ticket_type', '=', 'latest.ticket_type')
-                     ->on('sla_policies.priority', '=', 'latest.priority')
-                     ->on('sla_policies.version', '=', 'latest.max_version');
+                    ->on('sla_policies.priority', '=', 'latest.priority')
+                    ->on('sla_policies.version', '=', 'latest.max_version');
             })
             ->select('sla_policies.*')
             ->orderBy('sla_policies.ticket_type')
@@ -44,7 +44,7 @@ class SlaPolicyController extends Controller
             ->get();
 
         return response()->json([
-            'data' => $policies->map(fn ($p) => $this->formatPolicy($p)),
+            'data' => $policies->map(fn($p) => $this->formatPolicy($p)),
             'total' => $policies->count(),
         ]);
     }
@@ -95,20 +95,20 @@ class SlaPolicyController extends Controller
         }
 
         $policy = SlaPolicy::create([
-            'ticket_type'   => $ticketType,
-            'priority'      => $priority,
-            'version'       => 1,
+            'ticket_type' => $ticketType,
+            'priority' => $priority,
+            'version' => 1,
             'total_seconds' => (int) ($hours['total'] * 3600),
-            'l1_seconds'    => (int) ($hours['L1'] * 3600),
-            'l2_seconds'    => (int) ($hours['L2'] * 3600),
-            'l3_seconds'    => (int) ($hours['L3'] * 3600),
-            'l4_seconds'    => (int) ($hours['L4'] * 3600),
-            'rt_seconds'    => (int) ($hours['RT'] * 3600),
+            'l1_seconds' => (int) ($hours['L1'] * 3600),
+            'l2_seconds' => (int) ($hours['L2'] * 3600),
+            'l3_seconds' => (int) ($hours['L3'] * 3600),
+            'l4_seconds' => (int) ($hours['L4'] * 3600),
+            'rt_seconds' => (int) ($hours['RT'] * 3600),
         ]);
 
         return response()->json([
             'message' => 'Policy created successfully',
-            'data'    => $this->formatPolicy($policy),
+            'data' => $this->formatPolicy($policy),
         ], 201);
     }
 
@@ -140,21 +140,21 @@ class SlaPolicyController extends Controller
             ->max('version');
 
         $newPolicy = SlaPolicy::create([
-            'ticket_type'   => $current->ticket_type,
-            'priority'      => $current->priority,
-            'version'       => $maxVersion + 1,
+            'ticket_type' => $current->ticket_type,
+            'priority' => $current->priority,
+            'version' => $maxVersion + 1,
             'total_seconds' => (int) ($hours['total'] * 3600),
-            'l1_seconds'    => (int) ($hours['L1'] * 3600),
-            'l2_seconds'    => (int) ($hours['L2'] * 3600),
-            'l3_seconds'    => (int) ($hours['L3'] * 3600),
-            'l4_seconds'    => (int) ($hours['L4'] * 3600),
-            'rt_seconds'    => (int) ($hours['RT'] * 3600),
+            'l1_seconds' => (int) ($hours['L1'] * 3600),
+            'l2_seconds' => (int) ($hours['L2'] * 3600),
+            'l3_seconds' => (int) ($hours['L3'] * 3600),
+            'l4_seconds' => (int) ($hours['L4'] * 3600),
+            'rt_seconds' => (int) ($hours['RT'] * 3600),
         ]);
 
         return response()->json([
-            'message'         => 'Policy updated (new version created)',
+            'message' => 'Policy updated (new version created)',
             'previous_version' => $current->version,
-            'data'            => $this->formatPolicy($newPolicy),
+            'data' => $this->formatPolicy($newPolicy),
         ]);
     }
 
@@ -202,8 +202,8 @@ class SlaPolicyController extends Controller
 
         return response()->json([
             'ticket_type' => $policy->ticket_type,
-            'priority'    => $policy->priority,
-            'versions'    => $versions->map(fn ($p) => $this->formatPolicy($p)),
+            'priority' => $policy->priority,
+            'versions' => $versions->map(fn($p) => $this->formatPolicy($p)),
         ]);
     }
 
@@ -212,24 +212,24 @@ class SlaPolicyController extends Controller
     private function formatPolicy(SlaPolicy $policy): array
     {
         return [
-            'id'          => $policy->id,
+            'id' => $policy->id,
             'ticket_type' => $policy->ticket_type,
-            'priority'    => $policy->priority,
-            'version'     => $policy->version,
+            'priority' => $policy->priority,
+            'version' => $policy->version,
             'total_hours' => round($policy->total_seconds / 3600, 2),
-            'L1_hours'    => round($policy->l1_seconds / 3600, 2),
-            'L2_hours'    => round($policy->l2_seconds / 3600, 2),
-            'L3_hours'    => round($policy->l3_seconds / 3600, 2),
-            'L4_hours'    => round($policy->l4_seconds / 3600, 2),
-            'RT_hours'    => round($policy->rt_seconds / 3600, 2),
+            'L1_hours' => round($policy->l1_seconds / 3600, 2),
+            'L2_hours' => round($policy->l2_seconds / 3600, 2),
+            'L3_hours' => round($policy->l3_seconds / 3600, 2),
+            'L4_hours' => round($policy->l4_seconds / 3600, 2),
+            'RT_hours' => round($policy->rt_seconds / 3600, 2),
             'total_seconds' => $policy->total_seconds,
-            'l1_seconds'    => $policy->l1_seconds,
-            'l2_seconds'    => $policy->l2_seconds,
-            'l3_seconds'    => $policy->l3_seconds,
-            'l4_seconds'    => $policy->l4_seconds,
-            'rt_seconds'    => $policy->rt_seconds,
-            'created_at'    => $policy->created_at?->toIso8601String(),
-            'updated_at'    => $policy->updated_at?->toIso8601String(),
+            'l1_seconds' => $policy->l1_seconds,
+            'l2_seconds' => $policy->l2_seconds,
+            'l3_seconds' => $policy->l3_seconds,
+            'l4_seconds' => $policy->l4_seconds,
+            'rt_seconds' => $policy->rt_seconds,
+            'created_at' => $policy->created_at?->toIso8601String(),
+            'updated_at' => $policy->updated_at?->toIso8601String(),
         ];
     }
 
@@ -237,13 +237,13 @@ class SlaPolicyController extends Controller
     {
         return Validator::make($request->all(), [
             'ticket_type' => 'required|string|max:100',
-            'priority'    => 'required|string|in:Urgent,High,Medium,Low',
-            'total'       => 'required|numeric|min:0',
-            'L1'          => 'required|numeric|min:0',
-            'L2'          => 'required|numeric|min:0',
-            'L3'          => 'required|numeric|min:0',
-            'L4'          => 'required|numeric|min:0',
-            'RT'          => 'required|numeric|min:0',
+            'priority' => 'required|string|in:Urgent,High,Medium,Low',
+            'total' => 'required|numeric|min:0',
+            'L1' => 'required|numeric|min:0',
+            'L2' => 'required|numeric|min:0',
+            'L3' => 'required|numeric|min:0',
+            'L4' => 'required|numeric|min:0',
+            'RT' => 'required|numeric|min:0',
         ]);
     }
 
@@ -251,11 +251,11 @@ class SlaPolicyController extends Controller
     {
         return Validator::make($request->all(), [
             'total' => 'sometimes|numeric|min:0',
-            'L1'    => 'sometimes|numeric|min:0',
-            'L2'    => 'sometimes|numeric|min:0',
-            'L3'    => 'sometimes|numeric|min:0',
-            'L4'    => 'sometimes|numeric|min:0',
-            'RT'    => 'sometimes|numeric|min:0',
+            'L1' => 'sometimes|numeric|min:0',
+            'L2' => 'sometimes|numeric|min:0',
+            'L3' => 'sometimes|numeric|min:0',
+            'L4' => 'sometimes|numeric|min:0',
+            'RT' => 'sometimes|numeric|min:0',
         ]);
     }
 
@@ -263,11 +263,11 @@ class SlaPolicyController extends Controller
     {
         return [
             'total' => (float) $request->input('total'),
-            'L1'    => (float) $request->input('L1'),
-            'L2'    => (float) $request->input('L2'),
-            'L3'    => (float) $request->input('L3'),
-            'L4'    => (float) $request->input('L4'),
-            'RT'    => (float) $request->input('RT'),
+            'L1' => (float) $request->input('L1'),
+            'L2' => (float) $request->input('L2'),
+            'L3' => (float) $request->input('L3'),
+            'L4' => (float) $request->input('L4'),
+            'RT' => (float) $request->input('RT'),
         ];
     }
 
@@ -275,11 +275,11 @@ class SlaPolicyController extends Controller
     {
         return [
             'total' => $request->has('total') ? (float) $request->input('total') : $current->total_seconds / 3600,
-            'L1'    => $request->has('L1') ? (float) $request->input('L1') : $current->l1_seconds / 3600,
-            'L2'    => $request->has('L2') ? (float) $request->input('L2') : $current->l2_seconds / 3600,
-            'L3'    => $request->has('L3') ? (float) $request->input('L3') : $current->l3_seconds / 3600,
-            'L4'    => $request->has('L4') ? (float) $request->input('L4') : $current->l4_seconds / 3600,
-            'RT'    => $request->has('RT') ? (float) $request->input('RT') : $current->rt_seconds / 3600,
+            'L1' => $request->has('L1') ? (float) $request->input('L1') : $current->l1_seconds / 3600,
+            'L2' => $request->has('L2') ? (float) $request->input('L2') : $current->l2_seconds / 3600,
+            'L3' => $request->has('L3') ? (float) $request->input('L3') : $current->l3_seconds / 3600,
+            'L4' => $request->has('L4') ? (float) $request->input('L4') : $current->l4_seconds / 3600,
+            'RT' => $request->has('RT') ? (float) $request->input('RT') : $current->rt_seconds / 3600,
         ];
     }
 
