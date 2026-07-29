@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\HealthCheckController;
 use App\Http\Controllers\SlaPolicyController;
+use App\Http\Controllers\TicketActionController;
 use App\Http\Controllers\WebhookController;
 use App\Models\FreshdeskGroup;
 use App\Services\FreshdeskApiService;
@@ -13,6 +14,11 @@ Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
 Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
     Route::post('/freshdesk', [WebhookController::class, 'handleFreshdeskTicketEvent']);
     Route::post('/batch', [WebhookController::class, 'handleBatchEvents']);
+});
+
+Route::prefix('tickets')->middleware('auth.basic.fd')->group(function () {
+    Route::post('/change-due-date', [TicketActionController::class, 'changeDueDate']);
+    Route::get('/{id}/history', [TicketActionController::class, 'getHistory']);
 });
 
 Route::prefix('admin')->middleware('auth.basic.fd')->group(function () {
