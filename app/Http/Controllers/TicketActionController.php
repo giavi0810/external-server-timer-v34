@@ -7,12 +7,12 @@ use App\Services\FreshdeskApiService;
 use App\Services\Sla\HistoryService;
 use App\Services\Sla\TimelineService;
 use Carbon\Carbon;
-use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Throwable;
 
 class TicketActionController extends Controller
 {
@@ -65,14 +65,15 @@ class TicketActionController extends Controller
         }
 
         try {
-            $newDueDate = $request->input('new_due_date');
+            $rawDueDate = $request->input('new_due_date');
+            $isoDueDate = Carbon::parse($rawDueDate)->toIso8601String();
             $processingPhase = $request->input('processing_phase');
             $reason = $request->input('reason');
             $agentName = $request->input('agent_name');
 
             Log::info("TicketActionController: Change Due Date request received", [
                 'ticket_id' => $ticketId,
-                'new_due' => $newDueDate,
+                'new_due' => $isoDueDate,
                 'phase' => $processingPhase,
                 'reason' => $reason,
                 'agent_name' => $agentName,
@@ -112,7 +113,7 @@ class TicketActionController extends Controller
             $nextCount = $currentCount + 1;
 
             $updatePayload = [
-                'due_by' => $newDueDate,
+                'due_by' => $isoDueDate,
                 'custom_fields' => [
                     $countKey => $nextCount,
                     $slaModeKey => 'due-driven',
@@ -142,7 +143,7 @@ class TicketActionController extends Controller
             if ($localTicket) {
                 $localTicket->getOrCreateTtrMetric()->update([
                     'sla_mode' => 'due-driven',
-                    'lastest_due_date_ttr' => Carbon::parse($newDueDate),
+                    'lastest_due_date_ttr' => Carbon::parse($isoDueDate),
                 ]);
             }
 
@@ -150,7 +151,7 @@ class TicketActionController extends Controller
 
             $noteLines = [
                 "Thay đổi Due Date lần {$nextCount}",
-                "- Due Date mới: {$newDueDate}",
+                "- Due Date mới: {$isoDueDate}",
                 "- SLA Mode: due-driven",
             ];
             if ($processingPhase) {
@@ -177,7 +178,7 @@ class TicketActionController extends Controller
                 'change_count' => $nextCount,
                 'tag' => $tagResult,
             ]);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             Log::error("TicketActionController: Error handling Change Due Date", [
                 'ticket_id' => $ticketId,
                 'error' => $e->getMessage(),
