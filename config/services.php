@@ -35,4 +35,12 @@ return [
         ],
     ],
 
+    'rocketchat' => [
+        'webhook_url' => env('ROCKETCHAT_WEBHOOK_URL'),
+        'url' => env('ROCKETCHAT_URL'),
+        'user_id' => env('ROCKETCHAT_USER_ID'),
+        'token' => env('ROCKETCHAT_TOKEN'),
+        'channel' => env('ROCKETCHAT_CHANNEL', 'GENERAL'),
+    ],
+
 ];

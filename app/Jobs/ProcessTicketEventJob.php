@@ -252,6 +252,14 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
             'failed_events_marked' => $affectedTicketEvents,
             'manual_required' => true,
         ]);
+
+        if (class_exists(\App\Services\RocketChatService::class)) {
+            try {
+                app(\App\Services\RocketChatService::class)->sendSystemErrorAlert($exception, $this->ticketId);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to dispatch RocketChat alert on job failure', ['error' => $e->getMessage()]);
+            }
+        }
     }
 
     protected function getPendingTicketEvents()

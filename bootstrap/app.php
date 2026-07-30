@@ -14,10 +14,12 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(
-            at: '*',
+            at: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.1'],
             headers: Request::HEADER_X_FORWARDED_FOR
                 | Request::HEADER_X_FORWARDED_PROTO
         );
+
+        $middleware->append(\App\Http\Middleware\TraceIdMiddleware::class);
 
         $middleware->alias([
             'auth.basic.fd' => \App\Http\Middleware\BasicAuthMiddleware::class,
@@ -35,12 +37,16 @@ return Application::configure(basePath: dirname(__DIR__))
             }
 
             $request = request();
+            $traceId = $request->header('X-Trace-ID')
+                ?: $request->header('X-Correlation-ID')
+                ?: $request->header('X-Request-ID');
 
-            return [
+            return array_filter([
                 'request_method' => $request->method(),
                 'request_path' => $request->path(),
-                'correlation_id' => $request->header('X-Correlation-ID'),
-            ];
+                'trace_id' => $traceId,
+                'correlation_id' => $traceId,
+            ]);
         });
 
         $exceptions->reportable(function (\Throwable $e): void {

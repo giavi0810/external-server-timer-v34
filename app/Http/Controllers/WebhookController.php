@@ -48,7 +48,7 @@ class WebhookController extends Controller
             }
 
             // Phase 1 Legacy Ticket Filtering: Ignore tickets created before Go-Live
-            if (env('ENABLE_LEGACY_TICKET_FILTER') && env('GO_LIVE_TIMESTAMP')) {
+            if (config('freshdesk.enable_legacy_ticket_filter') && config('freshdesk.go_live_timestamp')) {
                 $ticketData = $validated['ticket_data'] ?? [];
                 $ticketCreatedAtRaw = $ticketData['created_at']
                     ?? $request->input('raw_payload.ticket.created_at')
@@ -57,7 +57,7 @@ class WebhookController extends Controller
 
                 if ($ticketCreatedAtRaw) {
                     $ticketCreatedAt = Carbon::parse($ticketCreatedAtRaw);
-                    $goLiveTimestamp = Carbon::parse(env('GO_LIVE_TIMESTAMP'));
+                    $goLiveTimestamp = Carbon::parse(config('freshdesk.go_live_timestamp'));
 
                     if ($ticketCreatedAt->lessThan($goLiveTimestamp)) {
                         Log::info("Webhook Phase 1 Filter: Ignored legacy ticket created before Go-Live", [
@@ -163,15 +163,17 @@ class WebhookController extends Controller
             }
 
             if ($hasIncomingTicketData && !empty($ticketData)) {
-                $ticketUpdateData = [
+                $incomingData = [
                     'subject' => $ticketData['subject'] ?? null,
-                    'status' => $status ?? 'Open',
-                    'priority' => $priority ?? 'Medium',
-                    'ticket_type' => $ticketData['ticket_type'] ?? 'VIP',
+                    'status' => $status,
+                    'priority' => $priority,
+                    'ticket_type' => $ticketData['ticket_type'] ?? null,
                     'group_id' => $groupId,
                     'requester_id' => $ticketData['requester_id'] ?? $validated['conversation_data']['actor_id'] ?? null,
-                    'fd_created_at' => $ticketData['created_at'] ?? now(),
+                    'fd_created_at' => $ticketData['created_at'] ?? null,
                 ];
+
+                $ticketUpdateData = array_filter($incomingData, static fn ($value) => $value !== null);
 
                 $ticket = Ticket::updateOrCreate(
                     ['ticket_id' => $ticketId],
