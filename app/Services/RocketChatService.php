@@ -119,7 +119,13 @@ class RocketChatService
         }
 
         if (!empty($baseUrl) && !empty($userId) && !empty($token)) {
-            $endpoint = rtrim($baseUrl, '/') . '/api/v1/chat.postMessage';
+            $baseUrls = array_unique(array_filter([
+                $baseUrl,
+                str_replace(['localhost', '127.0.0.1'], 'host.docker.internal', $baseUrl),
+                str_replace(['localhost', '127.0.0.1'], '172.17.0.1', $baseUrl),
+                str_replace(['localhost', '127.0.0.1'], '172.22.0.1', $baseUrl),
+            ]));
+
             $headers = [
                 'X-User-Id' => $userId,
                 'X-Auth-Token' => $token,
@@ -128,29 +134,48 @@ class RocketChatService
 
             $cleanChannel = ltrim($channel, '#');
             $candidates = array_unique([
+                strtolower($cleanChannel),
+                '#' . strtolower($cleanChannel),
                 $channel,
                 $cleanChannel,
                 strtoupper($cleanChannel),
+                '#' . strtoupper($cleanChannel),
             ]);
 
-            foreach ($candidates as $targetChannel) {
-                try {
-                    $response = Http::timeout(3)
-                        ->withHeaders($headers)
-                        ->post($endpoint, [
-                            'channel' => $targetChannel,
-                            'text' => $text,
-                            'attachments' => $attachments,
-                        ]);
+            foreach ($baseUrls as $currentBaseUrl) {
+                $endpoint = rtrim($currentBaseUrl, '/') . '/api/v1/chat.postMessage';
 
-                    if ($response->successful()) {
-                        return true;
+                foreach ($candidates as $targetChannel) {
+                    try {
+                        $response = Http::timeout(3)
+                            ->withHeaders($headers)
+                            ->post($endpoint, [
+                                'channel' => $targetChannel,
+                                'text' => $text,
+                                'attachments' => $attachments,
+                            ]);
+
+                        if ($response->successful()) {
+                            Log::info('RocketChat notification dispatched successfully', [
+                                'url' => $currentBaseUrl,
+                                'channel' => $targetChannel,
+                            ]);
+                            return true;
+                        }
+
+                        Log::warning('RocketChat REST API response error', [
+                            'url' => $currentBaseUrl,
+                            'channel' => $targetChannel,
+                            'status' => $response->status(),
+                            'response' => $response->json() ?? $response->body(),
+                        ]);
+                    } catch (Throwable $e) {
+                        Log::warning('RocketChat REST API dispatch exception', [
+                            'url' => $currentBaseUrl,
+                            'channel' => $targetChannel,
+                            'error' => $e->getMessage(),
+                        ]);
                     }
-                } catch (Throwable $e) {
-                    Log::warning('RocketChat REST API dispatch failed for channel', [
-                        'channel' => $targetChannel,
-                        'error' => $e->getMessage(),
-                    ]);
                 }
             }
 
