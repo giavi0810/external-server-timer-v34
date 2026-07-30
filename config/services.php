@@ -41,6 +41,8 @@ return [
         'user_id' => env('ROCKETCHAT_USER_ID'),
         'token' => env('ROCKETCHAT_TOKEN'),
         'channel' => env('ROCKETCHAT_CHANNEL', 'GENERAL'),
+        'alert_timezone' => env('ROCKETCHAT_ALERT_TIMEZONE', 'Asia/Ho_Chi_Minh'),
+        'alert_dedup_seconds' => (int) env('ROCKETCHAT_ALERT_DEDUP_SECONDS', 300),
     ],
 
 ];
