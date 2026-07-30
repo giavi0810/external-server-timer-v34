@@ -19,7 +19,7 @@ return [
 
     'basic_auth' => [
         'username' => env('FRESHDESK_WEBHOOK_USER', 'admin'),
-        'password' => env('FRESHDESK_WEBHOOK_PASSWORD', '123456'),
+        'password' => env('FRESHDESK_WEBHOOK_PASSWORD'),
     ],
 
     /*
@@ -129,6 +129,15 @@ return [
     */
 
     'reopen_threshold_minutes' => (int) env('FRESHDESK_REOPEN_THRESHOLD', 1440),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Legacy Ticket Filter (Phase 1)
+    |--------------------------------------------------------------------------
+    */
+
+    'enable_legacy_ticket_filter' => (bool) env('ENABLE_LEGACY_TICKET_FILTER', false),
+    'go_live_timestamp' => env('GO_LIVE_TIMESTAMP'),
 
 ];
 

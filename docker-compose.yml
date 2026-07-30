@@ -7,6 +7,8 @@ services:
     image: timer-v34-app:latest
     container_name: timer-v34-app
     restart: always
+    security_opt:
+      - no-new-privileges:true
     working_dir: /var/www/html
     env_file:
       - path: .env
@@ -55,6 +57,8 @@ services:
     image: timer-v34-webserver:latest
     container_name: timer-v34-webserver
     restart: always
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${APP_PORT:-8340}:80"
     volumes:
@@ -68,6 +72,8 @@ services:
     image: timer-v34-app:latest
     container_name: timer-v34-queue-worker
     restart: always
+    security_opt:
+      - no-new-privileges:true
     working_dir: /var/www/html
     command:
       - php
@@ -123,12 +129,14 @@ services:
     image: postgres:16-alpine
     container_name: timer-v34-postgres
     restart: always
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: ${DB_DATABASE:-timer_v34_db}
       POSTGRES_USER: ${DB_USERNAME:-timer_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-timer_password_123}
     ports:
-      - "${FORWARD_DB_PORT:-5434}:5432"
+      - "127.0.0.1:${FORWARD_DB_PORT:-5434}:5432"
     volumes:
       - postgres-v34-data:/var/lib/postgresql/data
     networks:
@@ -138,8 +146,10 @@ services:
     image: redis:7-alpine
     container_name: timer-v34-redis
     restart: always
+    security_opt:
+      - no-new-privileges:true
     ports:
-      - "${FORWARD_REDIS_PORT:-6384}:6379"
+      - "127.0.0.1:${FORWARD_REDIS_PORT:-6384}:6379"
     volumes:
       - redis-v34-data:/data
     networks:

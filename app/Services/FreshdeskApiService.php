@@ -17,8 +17,8 @@ class FreshdeskApiService
 
     public function __construct()
     {
-        $this->domain = config('freshdesk.domain') ?: env('FRESHDESK_DOMAIN', '');
-        $this->apiKey = config('freshdesk.api_key') ?: env('FRESHDESK_API_KEY', '');
+        $this->domain = (string) config('freshdesk.domain', '');
+        $this->apiKey = (string) config('freshdesk.api_key', '');
     }
 
     /**

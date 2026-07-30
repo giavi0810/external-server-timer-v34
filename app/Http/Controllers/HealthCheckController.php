@@ -39,7 +39,7 @@ class HealthCheckController extends Controller
             $status = 'unhealthy';
             $details['redis'] = [
                 'status' => 'unhealthy',
-                'error' => $e->getMessage(),
+                'error' => 'Connection failed',
             ];
             Log::error('Health Check - Redis error: ' . $e->getMessage());
         }
@@ -56,7 +56,7 @@ class HealthCheckController extends Controller
             $status = 'unhealthy';
             $details['queue'] = [
                 'status' => 'unhealthy',
-                'error' => $e->getMessage(),
+                'error' => 'Connection failed',
             ];
             Log::error('Health Check - Queue error: ' . $e->getMessage());
         }
@@ -90,7 +90,7 @@ class HealthCheckController extends Controller
             $status = 'unhealthy';
             $details['database'] = [
                 'status' => 'unhealthy',
-                'error' => $e->getMessage(),
+                'error' => 'Database connection failed',
             ];
             Log::error('Health Check - Database error: ' . $e->getMessage());
         }

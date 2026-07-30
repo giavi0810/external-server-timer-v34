@@ -9,7 +9,6 @@ use App\Services\FreshdeskApiService;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthCheckController::class, 'check']);
-Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
 
 Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
     Route::post('/freshdesk', [WebhookController::class, 'handleFreshdeskTicketEvent']);
@@ -18,10 +17,11 @@ Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
 
 Route::prefix('tickets')->middleware('auth.basic.fd')->group(function () {
     Route::post('/change-due-date', [TicketActionController::class, 'changeDueDate']);
-    Route::get('/{id}/history', [TicketActionController::class, 'getHistory']);
+    Route::get('/{id}/history', [TicketActionController::class, 'getHistory'])->whereNumber('id');
 });
 
 Route::prefix('admin')->middleware('auth.basic.fd')->group(function () {
+    Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
     Route::post('/refresh-groups', function () {
         if (class_exists(FreshdeskApiService::class)) {
             app(FreshdeskApiService::class)->refreshGroupMappings();
