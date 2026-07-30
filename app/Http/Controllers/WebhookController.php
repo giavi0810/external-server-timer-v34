@@ -329,6 +329,7 @@ class WebhookController extends Controller
                 'correlation_id' => $correlationId,
             ], 422);
         } catch (\Throwable $e) {
+            report($e);
             Log::error("Webhook processing error", [
                 'error' => $e->getMessage(),
                 'exception_class' => $e::class,
@@ -594,6 +595,7 @@ class WebhookController extends Controller
                 'correlation_id' => $correlationId,
             ], 422);
         } catch (\Throwable $exception) {
+            report($exception);
             Log::error('Batch webhook ingestion failed', [
                 'events_count' => count($request->validated('events')),
                 'error' => $exception->getMessage(),

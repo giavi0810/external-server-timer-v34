@@ -41,6 +41,13 @@ services:
       FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
       ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
       GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
+      ROCKETCHAT_URL: ${ROCKETCHAT_URL:-http://host.docker.internal:3000}
+      ROCKETCHAT_USER_ID: ${ROCKETCHAT_USER_ID:-}
+      ROCKETCHAT_TOKEN: ${ROCKETCHAT_TOKEN:-}
+      ROCKETCHAT_CHANNEL: ${ROCKETCHAT_CHANNEL:-GENERAL}
+      ROCKETCHAT_WEBHOOK_URL: ${ROCKETCHAT_WEBHOOK_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - laravel-v34-storage:/var/www/html/storage
     networks:
@@ -117,6 +124,13 @@ services:
       FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
       ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
       GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
+      ROCKETCHAT_URL: ${ROCKETCHAT_URL:-http://host.docker.internal:3000}
+      ROCKETCHAT_USER_ID: ${ROCKETCHAT_USER_ID:-}
+      ROCKETCHAT_TOKEN: ${ROCKETCHAT_TOKEN:-}
+      ROCKETCHAT_CHANNEL: ${ROCKETCHAT_CHANNEL:-GENERAL}
+      ROCKETCHAT_WEBHOOK_URL: ${ROCKETCHAT_WEBHOOK_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - laravel-v34-storage:/var/www/html/storage
     networks:

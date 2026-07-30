@@ -135,7 +135,7 @@ class RocketChatService
 
             foreach ($candidates as $targetChannel) {
                 try {
-                    $response = Http::timeout(5)
+                    $response = Http::timeout(3)
                         ->withHeaders($headers)
                         ->post($endpoint, [
                             'channel' => $targetChannel,
