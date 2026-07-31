@@ -214,7 +214,9 @@ services:
         env_file:
             - path: .env
               required: false
-        environment: *worker-environment
+        environment:
+            <<: *worker-environment
+            CACHE_STORE: file
         volumes:
             - laravel-v34-storage:/var/www/html/storage
         networks:
