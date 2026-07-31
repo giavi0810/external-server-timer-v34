@@ -231,7 +231,7 @@ class TimerService
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $ttrMetric->used_seconds = max(0, $totalGroupUsed);
 
-        if ($ttrMetric->sla_mode === 'due-driven') {
+        if ($ttrMetric->processing_mode === 'due-driven') {
             $currentPauseDuration = 0;
             if ($statusMetric->waiting_started_at) {
                 $currentPauseDuration += $now->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp;

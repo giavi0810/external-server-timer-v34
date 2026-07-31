@@ -3,13 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\InvalidWebhookPayloadException;
-use App\Jobs\ProcessTicketEventJob;
 use App\Models\FreshdeskGroup;
 use App\Models\TicketEvent;
 use App\Models\Ticket;
 use App\Services\FreshdeskApiService;
 use App\Services\Sla\BatchTicketEventService;
 use App\Services\Webhooks\FreshdeskEventNormalizer;
+use App\Services\Webhooks\DurableWebhookSpool;
+use App\Services\Queue\TicketLogicOutboxService;
 use App\Http\Requests\BatchFreshdeskWebhookRequest;
 use App\Http\Requests\FreshdeskWebhookRequest;
 use Carbon\Carbon;
@@ -23,7 +24,8 @@ class WebhookController extends Controller
 {
     public function __construct(
         protected FreshdeskApiService $freshdeskService,
-        protected FreshdeskEventNormalizer $eventNormalizer
+        protected FreshdeskEventNormalizer $eventNormalizer,
+        protected DurableWebhookSpool $webhookSpool
     ) {
     }
 
@@ -33,6 +35,43 @@ class WebhookController extends Controller
     public function handleFreshdeskTicketEvent(FreshdeskWebhookRequest $request): JsonResponse
     {
         $correlationId = $this->resolveCorrelationId($request->header('X-Correlation-ID'));
+
+        if (!config('freshdesk_spool.enabled')) {
+            return $this->processPersistedFreshdeskTicketEvent($request, $correlationId);
+        }
+
+        try {
+            $receipt = $this->webhookSpool->accept($request->all(), $correlationId);
+
+            return response()->json([
+                'success' => true,
+                'accepted' => true,
+                'receipt_id' => $receipt['receipt_id'],
+                'correlation_id' => $correlationId,
+            ], 200);
+        } catch (\Throwable $exception) {
+            report($exception);
+            Log::critical('Freshdesk webhook could not be written to durable spool', [
+                'correlation_id' => $correlationId,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to durably accept webhook',
+                'correlation_id' => $correlationId,
+            ], 503);
+        }
+    }
+
+    public function processPersistedFreshdeskTicketEvent(
+        FreshdeskWebhookRequest $request,
+        ?string $receiptId = null
+    ): JsonResponse
+    {
+        $correlationId = $this->resolveCorrelationId(
+            $receiptId ?? $request->header('X-Correlation-ID')
+        );
 
         try {
             $validated = $request->validated();
@@ -103,6 +142,10 @@ class WebhookController extends Controller
 
             $ticket = Ticket::where('ticket_id', $ticketId)->first();
             $oldValues = $ticket ? $ticket->toArray() : [];
+            $incomingUpdatedAt = Carbon::parse($ticketData['updated_at'] ?? $eventTimestamp)->utc();
+            $shouldApplySnapshot = !$ticket
+                || !$ticket->freshdesk_updated_at
+                || $incomingUpdatedAt->gte($ticket->freshdesk_updated_at);
 
             if (empty($ticketData) && $ticket) {
                 Log::info("ticket_data is empty, using existing ticket from DB", [
@@ -144,25 +187,27 @@ class WebhookController extends Controller
 
             $cf = $ticketData['custom_fields'] ?? [];
 
-            $slaModeFromWebhook = null;
+            $processingModeFromWebhook = null;
             foreach ($cf as $k => $v) {
-                if (str_starts_with($k, 'cf_sla_mode')) {
-                    $slaModeFromWebhook = $v;
+                if (str_starts_with($k, 'cf_processing_mode')
+                    || str_starts_with($k, 'cf_sla_mode')
+                ) {
+                    $processingModeFromWebhook = $v;
                     break;
                 }
             }
 
-            $isDueDriven = ($slaModeFromWebhook === 'due-driven');
+            $isDueDriven = ($processingModeFromWebhook === 'due-driven');
 
-            if ($slaModeFromWebhook !== null) {
-                Log::info("WebhookController: Detected SLA mode", [
+            if ($processingModeFromWebhook !== null) {
+                Log::info("WebhookController: Detected Processing Mode", [
                     'ticket_id' => $ticketId,
-                    'sla_mode' => $slaModeFromWebhook,
+                    'processing_mode' => $processingModeFromWebhook,
                     'is_due_driven' => $isDueDriven
                 ]);
             }
 
-            if ($hasIncomingTicketData && !empty($ticketData)) {
+            if ($hasIncomingTicketData && !empty($ticketData) && $shouldApplySnapshot) {
                 $incomingData = [
                     'subject' => $ticketData['subject'] ?? null,
                     'status' => $status,
@@ -171,6 +216,7 @@ class WebhookController extends Controller
                     'group_id' => $groupId,
                     'requester_id' => $ticketData['requester_id'] ?? $validated['conversation_data']['actor_id'] ?? null,
                     'fd_created_at' => $ticketData['created_at'] ?? null,
+                    'freshdesk_updated_at' => $incomingUpdatedAt,
                 ];
 
                 $ticketUpdateData = array_filter($incomingData, static fn ($value) => $value !== null);
@@ -181,14 +227,14 @@ class WebhookController extends Controller
                 );
 
                 $ticket->refresh();
-                if ($slaModeFromWebhook !== null) {
+                if ($processingModeFromWebhook !== null) {
                     $ticket->getOrCreateTtrMetric()->update([
-                        'sla_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
+                        'processing_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
                     ]);
                 }
-            } elseif ($ticket && $slaModeFromWebhook !== null) {
+            } elseif ($ticket && $processingModeFromWebhook !== null && $shouldApplySnapshot) {
                 $ticket->getOrCreateTtrMetric()->update([
-                    'sla_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
+                    'processing_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
                 ]);
 
                 Log::info("WebhookController: Updated only due-driven flag", [
@@ -200,7 +246,7 @@ class WebhookController extends Controller
             if ($ticket) {
                 Log::info("WebhookController: Ticket State Saved", [
                     'ticket_id' => $ticket->ticket_id,
-                    'sla_mode' => $ticket->getOrCreateTtrMetric()->sla_mode,
+                    'processing_mode' => $ticket->getOrCreateTtrMetric()->processing_mode,
                     'priority' => $ticket->priority
                 ]);
             }
@@ -288,6 +334,7 @@ class WebhookController extends Controller
                 ->first();
 
             if ($existingTicketEvent) {
+                $this->repairLogicOutboxForDuplicate($existingTicketEvent);
                 Log::info("Webhook duplicate ignored", [
                     'event_id' => $existingTicketEvent->id,
                     'event_type' => $eventType,
@@ -366,16 +413,22 @@ class WebhookController extends Controller
             'received_at' => now(),
         ]);
 
-        ProcessTicketEventJob::dispatch($ticketId)->delay(now()->addSeconds(20));
-        $event->markAsQueued();
+        $replayRequired = TicketEvent::query()
+            ->where('ticket_id', $ticketId)
+            ->where('status', TicketEvent::STATUS_PROCESSED)
+            ->where('event_timestamp', '>', Carbon::parse($eventTimestamp))
+            ->exists();
 
-        Log::info("Webhook received and queued", [
+        app(TicketLogicOutboxService::class)->requestForEvent($event, $replayRequired);
+
+        Log::info("Webhook persisted and logic outbox requested", [
             'event_id' => $event->id,
             'event_type' => $eventType,
             'ticket_id' => $ticketId,
             'actor' => $actor,
             'changes_count' => count($normalizedChanges),
             'normalized_changes' => $normalizedChanges,
+            'replay_required' => $replayRequired,
         ]);
 
         return $event;
@@ -405,6 +458,7 @@ class WebhookController extends Controller
                         );
 
                         $existingTicketEvent->save();
+                        $this->repairLogicOutboxForDuplicate($existingTicketEvent);
 
                         Log::info("Webhook duplicate ignored for agent_replied", [
                             'event_id' => $existingTicketEvent->id,
@@ -463,6 +517,20 @@ class WebhookController extends Controller
         }
 
         return $existing;
+    }
+
+    protected function repairLogicOutboxForDuplicate(TicketEvent $event): void
+    {
+        if (!in_array($event->status, [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED], true)) {
+            return;
+        }
+
+        $outboxExists = \App\Models\TicketLogicOutbox::query()
+            ->where('ticket_id', $event->ticket_id)
+            ->exists();
+        if ($event->logic_generation === null || !$outboxExists) {
+            app(TicketLogicOutboxService::class)->requestForEvent($event, false);
+        }
     }
 
     protected function findDuplicateAgentReplyTicketEvent(int $ticketId, string $eventTimestamp, array $eventDataPayload): ?TicketEvent

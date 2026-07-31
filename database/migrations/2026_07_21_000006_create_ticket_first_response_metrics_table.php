@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('status', 50)->default('running')->index();
             $table->timestampTz('started_at')->nullable();
             $table->timestampTz('original_due_date_rt')->nullable();
-            $table->timestampTz('lastest_due_date_rt')->nullable();
+            $table->timestampTz('latest_due_date_rt')->nullable();
             $table->timestampTz('first_response_at')->nullable();
             $table->unsignedInteger('agent_reply_count')->default(0);
             $table->unsignedInteger('requester_reply_count')->default(0);

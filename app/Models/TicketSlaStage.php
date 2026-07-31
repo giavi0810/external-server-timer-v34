@@ -11,7 +11,7 @@ class TicketSlaStage extends Model
 {
     protected $fillable = [
         'ticket_id', 'sla_policy_id', 'sequence_number', 'priority_stage_number',
-        'trigger_type', 'priority', 'sla_mode', 'opened_at', 'checkpoint_at',
+        'trigger_type', 'priority', 'processing_mode', 'opened_at', 'checkpoint_at',
         'opened_by_event_id', 'checkpoint_event_id',
     ];
 

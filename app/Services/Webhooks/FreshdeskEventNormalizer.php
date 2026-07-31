@@ -9,6 +9,7 @@ use Carbon\Carbon;
 class FreshdeskEventNormalizer
 {
     private const CUSTOM_FIELD_PREFIXES = [
+        'cf_processing_mode',
         'cf_sla_mode',
         'cf_number_of_due_date_changes',
         'cf_processing_phase',

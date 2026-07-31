@@ -11,6 +11,12 @@ COPY vite.config.js ./
 
 RUN npm run build
 
+FROM alpine:3.22 AS fsync-helper
+
+RUN apk add --no-cache build-base
+COPY docker/fsync-dir.c /src/fsync-dir.c
+RUN cc -O2 -Wall -Wextra -o /usr/local/bin/fsync-dir /src/fsync-dir.c
+
 FROM php:8.4-fpm-alpine AS app
 
 # Set working directory
@@ -49,6 +55,7 @@ RUN composer install \
 
 # Copy PHP custom config
 COPY docker/php/local.ini /usr/local/etc/php/conf.d/local.ini
+COPY --from=fsync-helper /usr/local/bin/fsync-dir /usr/local/bin/fsync-dir
 
 # Copy project code
 COPY . .
@@ -63,6 +70,16 @@ RUN composer dump-autoload \
         --no-interaction \
     && mkdir -p \
         storage/app/public \
+        storage/app/freshdesk-spool/temporary \
+        storage/app/freshdesk-spool/ready \
+        storage/app/freshdesk-spool/enqueued \
+        storage/app/freshdesk-spool/processing \
+        storage/app/freshdesk-spool/committed-gc \
+        storage/app/freshdesk-spool/quarantine \
+        storage/app/rocketchat-audit/temporary \
+        storage/app/rocketchat-audit/pending \
+        storage/app/rocketchat-audit/ready \
+        storage/app/rocketchat-audit/processing \
         storage/framework/cache/data \
         storage/framework/sessions \
         storage/framework/views \

@@ -90,7 +90,7 @@ class TicketActionController extends Controller
             $cf = $fdTicket['custom_fields'] ?? [];
 
             $countKey = 'cf_number_of_due_date_changes';
-            $slaModeKey = 'cf_sla_mode';
+            $processingModeKey = 'cf_processing_mode';
             $phaseKey = 'cf_processing_phase';
             $reasonKey = 'cf_change_due_reason';
 
@@ -98,8 +98,10 @@ class TicketActionController extends Controller
                 if (str_starts_with($key, 'cf_number_of_due_date_changes')) {
                     $countKey = $key;
                 }
-                if (str_starts_with($key, 'cf_sla_mode')) {
-                    $slaModeKey = $key;
+                if (str_starts_with($key, 'cf_processing_mode')
+                    || str_starts_with($key, 'cf_sla_mode')
+                ) {
+                    $processingModeKey = $key;
                 }
                 if (str_starts_with($key, 'cf_processing_phase')) {
                     $phaseKey = $key;
@@ -116,7 +118,7 @@ class TicketActionController extends Controller
                 'due_by' => $isoDueDate,
                 'custom_fields' => [
                     $countKey => $nextCount,
-                    $slaModeKey => 'due-driven',
+                    $processingModeKey => 'due-driven',
                 ],
             ];
 
@@ -142,8 +144,8 @@ class TicketActionController extends Controller
             $localTicket = Ticket::where('ticket_id', $ticketId)->first();
             if ($localTicket) {
                 $localTicket->getOrCreateTtrMetric()->update([
-                    'sla_mode' => 'due-driven',
-                    'lastest_due_date_ttr' => Carbon::parse($isoDueDate),
+                    'processing_mode' => 'due-driven',
+                    'latest_due_date_ttr' => Carbon::parse($isoDueDate),
                 ]);
             }
 
@@ -152,7 +154,7 @@ class TicketActionController extends Controller
             $noteLines = [
                 "Thay đổi Due Date lần {$nextCount}",
                 "- Due Date mới: {$isoDueDate}",
-                "- SLA Mode: due-driven",
+                "- Processing Mode: due-driven",
             ];
             if ($processingPhase) {
                 $noteLines[] = "- Processing Phase: {$processingPhase}";

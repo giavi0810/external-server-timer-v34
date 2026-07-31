@@ -15,10 +15,10 @@ class TicketTtrMetric extends Model
         'ticket_id',
         'total_seconds',
         'used_seconds',
-        'sla_mode',
+        'processing_mode',
         'started_at',
         'original_due_date_ttr',
-        'lastest_due_date_ttr',
+        'latest_due_date_ttr',
     ];
 
     protected $casts = [
@@ -26,7 +26,7 @@ class TicketTtrMetric extends Model
         'used_seconds' => 'integer',
         'started_at' => 'datetime',
         'original_due_date_ttr' => 'datetime',
-        'lastest_due_date_ttr' => 'datetime',
+        'latest_due_date_ttr' => 'datetime',
     ];
 
     public function ticket(): BelongsTo

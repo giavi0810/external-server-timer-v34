@@ -107,11 +107,11 @@ class TicketCreatedHandler
         $this->timelineService->appendTicketEventLog($ticket, 's', $this->timerService->getShortStatus($ticket->status), $eventTimestamp);
         $this->timelineService->appendTicketEventLog($ticket, 'p', $ticket->priority, $eventTimestamp);
 
-        if ($ttrMetric->lastest_due_date_ttr) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->lastest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
+        if ($ttrMetric->latest_due_date_ttr) {
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
         }
-        if ($rtMetric->lastest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->lastest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
+        if ($rtMetric->latest_due_date_rt) {
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
         }
 
         Log::info("TicketCreatedHandler: hoàn thành ticket #{$ticketId}", [
@@ -138,7 +138,7 @@ class TicketCreatedHandler
             'priority_stage_number' => 1,
             'trigger_type' => 'initial',
             'priority' => $ticket->priority,
-            'sla_mode' => 'priority-driven',
+            'processing_mode' => 'priority-driven',
             'opened_at' => $openedAt,
             'opened_by_event_id' => $event->id,
         ]);
@@ -146,8 +146,8 @@ class TicketCreatedHandler
         $ttr = $ticket->getOrCreateTtrMetric();
         $rt = $ticket->getOrCreateFirstResponseMetric();
         foreach ([
-            ['type' => 'ttr', 'goal' => $policy->total_seconds, 'used' => $ttr->used_seconds, 'due' => $ttr->lastest_due_date_ttr],
-            ['type' => 'rt', 'goal' => $policy->rt_seconds, 'used' => $rt->used_seconds, 'due' => $rt->lastest_due_date_rt],
+            ['type' => 'ttr', 'goal' => $policy->total_seconds, 'used' => $ttr->used_seconds, 'due' => $ttr->latest_due_date_ttr],
+            ['type' => 'rt', 'goal' => $policy->rt_seconds, 'used' => $rt->used_seconds, 'due' => $rt->latest_due_date_rt],
         ] as $metric) {
             TicketSlaStageMetric::create([
                 'ticket_sla_stage_id' => $stage->id,

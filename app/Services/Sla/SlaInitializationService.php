@@ -74,10 +74,10 @@ class SlaInitializationService
         $ttrMetric->update([
             'total_seconds' => $config->total_seconds,
             'used_seconds' => 0,
-            'sla_mode' => 'priority-driven',
+            'processing_mode' => 'priority-driven',
             'started_at' => $createdAt ?? null,
             'original_due_date_ttr' => $ttrDue ?? null,
-            'lastest_due_date_ttr' => $ttrDue ?? null,
+            'latest_due_date_ttr' => $ttrDue ?? null,
         ]);
 
         $rtTotal = $config->rt_seconds;
@@ -88,7 +88,7 @@ class SlaInitializationService
             'status' => 'running',
             'started_at' => $createdAt ?? null,
             'original_due_date_rt' => $rtDue ?? null,
-            'lastest_due_date_rt' => $rtDue ?? null,
+            'latest_due_date_rt' => $rtDue ?? null,
         ]);
 
         $initialGroupId = $ticket->group_id;

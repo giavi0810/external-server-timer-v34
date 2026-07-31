@@ -31,3 +31,9 @@ services:
       LOG_STACK: single,stderr
       LOG_LEVEL: debug
     volumes: *local-app-volumes
+
+  freshdesk-ingest-worker:
+    volumes: *local-app-volumes
+
+  durable-scheduler:
+    volumes: *local-app-volumes

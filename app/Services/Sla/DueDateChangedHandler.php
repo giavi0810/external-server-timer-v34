@@ -20,7 +20,7 @@ use Carbon\Carbon;
  * 2. Submit từ App Timer → TTR = SLA_priority + (new_due_app - old_due_immediate)
  *
  * Sau change due date:
- * - Đánh dấu sla_mode = due-driven
+ * - Đánh dấu processing_mode = due-driven
  * - Lưu original_due_date và change_due_date_app
  * - Phân bổ thời gian tăng thêm vào L4
  * - Pause → Run: KHÔNG cộng waiting time vào due date
@@ -67,7 +67,7 @@ class DueDateChangedHandler
             $ticket->ticket_type = $newTicketType;
         }
 
-        $oldDue = $ttrMetric->lastest_due_date_ttr ? Carbon::parse($ttrMetric->lastest_due_date_ttr) : null;
+        $oldDue = $ttrMetric->latest_due_date_ttr ? Carbon::parse($ttrMetric->latest_due_date_ttr) : null;
         $newDueRaw = $ticketData['due_by']
             ?? (collect($changes)->firstWhere('field', 'due_by')['new_value'] ?? null);
         if (!$newDueRaw) {
@@ -89,17 +89,17 @@ class DueDateChangedHandler
         ]);
 
         if (!$ttrMetric->original_due_date_ttr) {
-            $ttrMetric->original_due_date_ttr = $ttrMetric->lastest_due_date_ttr;
+            $ttrMetric->original_due_date_ttr = $ttrMetric->latest_due_date_ttr;
         }
 
-        $ttrMetric->lastest_due_date_ttr = $newDue;
+        $ttrMetric->latest_due_date_ttr = $newDue;
         if ($newFrDue) {
-            $rtMetric->lastest_due_date_rt = $newFrDue;
+            $rtMetric->latest_due_date_rt = $newFrDue;
         }
 
-        $isAppChange = ($ttrMetric->sla_mode === 'due-driven') && ($oldDue && $newDue->greaterThan($oldDue));
+        $isAppChange = ($ttrMetric->processing_mode === 'due-driven') && ($oldDue && $newDue->greaterThan($oldDue));
         
-        $ttrMetric->sla_mode = $isAppChange ? 'due-driven' : 'priority-driven';
+        $ttrMetric->processing_mode = $isAppChange ? 'due-driven' : 'priority-driven';
         $ttrMetric->save();
         $rtMetric->save();
 
@@ -110,8 +110,8 @@ class DueDateChangedHandler
 
         $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         
-        if ($rtMetric->lastest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->lastest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        if ($rtMetric->latest_due_date_rt) {
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         }
 
         Log::info("DueDateChangedHandler: hoàn thành", [
@@ -142,7 +142,7 @@ class DueDateChangedHandler
             'priority_stage_number' => null,
             'trigger_type' => 'due_date_change',
             'priority' => $ticket->priority,
-            'sla_mode' => 'due-driven',
+            'processing_mode' => 'due-driven',
             'opened_at' => $eventAt,
             'opened_by_event_id' => $event->id,
         ]);
@@ -165,9 +165,9 @@ class DueDateChangedHandler
             'sla_goal_seconds' => $policy->rt_seconds,
             'used_before_seconds' => $rt->used_seconds,
             'effective_sla_seconds' => $rt->total_seconds,
-            'old_due_at' => $rt->lastest_due_date_rt,
+            'old_due_at' => $rt->latest_due_date_rt,
             'standard_due_at' => $rt->original_due_date_rt,
-            'adjusted_due_at' => $rt->lastest_due_date_rt,
+            'adjusted_due_at' => $rt->latest_due_date_rt,
             'metric_result' => $rt->first_response_at ? 'not_applicable' : 'pending',
         ]);
 
@@ -190,18 +190,18 @@ class DueDateChangedHandler
     protected function recalculateSlaOnDueDateChange(Ticket $ticket, ?Carbon $oldDue, ?Carbon $eventAt = null): void
     {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
-        if (!$ticket->fd_created_at || !$ttrMetric->lastest_due_date_ttr) {
+        if (!$ticket->fd_created_at || !$ttrMetric->latest_due_date_ttr) {
             return;
         }
 
-        $newDue = Carbon::parse($ttrMetric->lastest_due_date_ttr);
+        $newDue = Carbon::parse($ttrMetric->latest_due_date_ttr);
         $config = SlaPolicy::where('ticket_type', $ticket->ticket_type)
             ->where('priority', $ticket->priority)
             ->first();
 
         if (!$config) return;
 
-        if ($ttrMetric->sla_mode === 'due-driven' && $oldDue) {
+        if ($ttrMetric->processing_mode === 'due-driven' && $oldDue) {
             $diffSeconds = $oldDue->diffInSeconds($newDue, false);
             $oldTotal = (int) $ttrMetric->total_seconds;
             $ttrMetric->total_seconds = max(0, $oldTotal + $diffSeconds);
