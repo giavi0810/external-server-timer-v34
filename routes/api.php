@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\HealthCheckController;
+use App\Http\Controllers\RocketChatDeliveryStatusController;
 use App\Http\Controllers\SlaPolicyController;
 use App\Http\Controllers\TicketActionController;
 use App\Http\Controllers\WebhookController;
@@ -22,6 +23,7 @@ Route::prefix('tickets')->middleware('auth.basic.fd')->group(function () {
 
 Route::prefix('admin')->middleware('auth.basic.fd')->group(function () {
     Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
+    Route::get('/rocket-chat-statuses', [RocketChatDeliveryStatusController::class, 'index']);
     Route::post('/refresh-groups', function () {
         if (class_exists(FreshdeskApiService::class)) {
             app(FreshdeskApiService::class)->refreshGroupMappings();

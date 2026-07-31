@@ -1,0 +1,23 @@
+{
+    "version": 1,
+    "global": {
+        "last_sent_at": 1785488403
+    },
+    "notifications": {
+        "system:78de1e5f1c1f2c54e8c7b8eff334194579548bfd": {
+            "last_sent_at": 1785486344
+        }
+    },
+    "redis_incidents": {
+        "8ae7e9cc6883ab0f6c371a19385c944bef660b0f": {
+            "status": "up",
+            "first_detected_at": 1785487662,
+            "last_detected_at": 1785488343,
+            "occurrence_count": 52,
+            "last_down_alert_at": 1785487684,
+            "down_alert_sent_at": 1785487684,
+            "recovered_at": 1785488403,
+            "recovery_alert_sent_at": 1785488403
+        }
+    }
+}

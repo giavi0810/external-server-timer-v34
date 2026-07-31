@@ -43,6 +43,18 @@ return [
         'channel' => env('ROCKETCHAT_CHANNEL', 'GENERAL'),
         'alert_timezone' => env('ROCKETCHAT_ALERT_TIMEZONE', 'Asia/Ho_Chi_Minh'),
         'alert_dedup_seconds' => (int) env('ROCKETCHAT_ALERT_DEDUP_SECONDS', 300),
+        'alert_global_rate_seconds' => (int) env('ROCKETCHAT_ALERT_GLOBAL_RATE_SECONDS', 60),
+        'alert_claim_seconds' => (int) env('ROCKETCHAT_ALERT_CLAIM_SECONDS', 30),
+        'alert_state_retention_seconds' => (int) env(
+            'ROCKETCHAT_ALERT_STATE_RETENTION_SECONDS',
+            604800
+        ),
+        'alert_state_path' => env(
+            'ROCKETCHAT_ALERT_STATE_PATH',
+            storage_path('framework/alerts/rocketchat-state.json')
+        ),
+        'redis_monitor_enabled' => (bool) env('ROCKETCHAT_REDIS_MONITOR_ENABLED', true),
+        'redis_reminder_seconds' => (int) env('ROCKETCHAT_REDIS_REMINDER_SECONDS', 1800),
     ],
 
 ];

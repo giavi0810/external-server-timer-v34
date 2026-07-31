@@ -110,11 +110,11 @@ class GroupChangedHandler
 
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
-        if ($ttrMetric->lastest_due_date_ttr) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->lastest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        if ($ttrMetric->latest_due_date_ttr) {
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         }
-        if ($rtMetric->lastest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->lastest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        if ($rtMetric->latest_due_date_rt) {
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         }
     }
 }

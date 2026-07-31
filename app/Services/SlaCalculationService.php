@@ -94,7 +94,7 @@ class SlaCalculationService
                 $newStatus = $statusChange['new_value'] ?? $ticketData['status'] ?? '';
 
                 $ticket = Ticket::where('ticket_id', $ticketId)->first();
-                $isDueDriven = $ticket && $ticket->getOrCreateTtrMetric()->sla_mode === 'due-driven';
+                $isDueDriven = $ticket && $ticket->getOrCreateTtrMetric()->processing_mode === 'due-driven';
 
                 if ($primaryField === 'status' && !$isDueDriven) {
                     Log::info("SlaCalculationService: Bỏ qua Due Date thay đổi phụ trong status_changed", [

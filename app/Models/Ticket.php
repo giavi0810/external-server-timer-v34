@@ -17,6 +17,7 @@ class Ticket extends Model
         'ticket_id', 'source_ticket_id', 'creation_reason', 'subject', 'status',
         'priority', 'ticket_type', 'group_id', 'requester_id', 'fd_created_at',
         'resolved_at', 'closed_at', 'reopened_at',
+        'freshdesk_updated_at',
     ];
 
     protected $casts = [
@@ -27,6 +28,7 @@ class Ticket extends Model
         'resolved_at' => 'datetime',
         'closed_at' => 'datetime',
         'reopened_at' => 'datetime',
+        'freshdesk_updated_at' => 'datetime',
     ];
 
     public function sourceTicket(): BelongsTo
@@ -88,7 +90,7 @@ class Ticket extends Model
     {
         return TicketTtrMetric::firstOrCreate(
             ['ticket_id' => $this->ticket_id],
-            ['total_seconds' => 0, 'used_seconds' => 0, 'sla_mode' => 'priority-driven']
+            ['total_seconds' => 0, 'used_seconds' => 0, 'processing_mode' => 'priority-driven']
         );
     }
 

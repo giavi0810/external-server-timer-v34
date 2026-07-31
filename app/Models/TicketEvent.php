@@ -49,6 +49,9 @@ class TicketEvent extends Model
         'received_at',
         'locked_at',
         'processed_at',
+        'logic_generation',
+        'source_order_key',
+        'processing_token',
     ];
 
     protected $casts = [
@@ -59,6 +62,7 @@ class TicketEvent extends Model
         'locked_at' => 'datetime',
         'processed_at' => 'datetime',
         'attempt_count' => 'integer',
+        'logic_generation' => 'integer',
     ];
 
     public function ticket(): BelongsTo
@@ -97,6 +101,7 @@ class TicketEvent extends Model
             'locked_at' => null,
             'processed_at' => now(),
             'last_error' => null,
+            'processing_token' => null,
         ]);
     }
 
@@ -106,6 +111,7 @@ class TicketEvent extends Model
             'status' => self::STATUS_FAILED,
             'locked_at' => null,
             'last_error' => $error,
+            'processing_token' => null,
         ]);
     }
 

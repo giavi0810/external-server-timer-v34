@@ -267,6 +267,12 @@ class FreshdeskApiService
     public function createTicket(array $payload): ?array
     {
         if (empty($this->domain) || empty($this->apiKey)) {
+            $this->lastErrorContext = [
+                'action' => 'create_ticket',
+                'reason' => 'config_missing',
+                'retryable' => false,
+                'outcome_unknown' => false,
+            ];
             Log::error("Failed to create ticket on Freshdesk", ['reason' => 'missing_credentials']);
             return null;
         }
@@ -278,13 +284,29 @@ class FreshdeskApiService
                 ->timeout(30)
                 ->post($url, $payload);
         } catch (\Throwable $exception) {
+            $this->lastErrorContext = [
+                'action' => 'create_ticket',
+                'reason' => 'network_exception',
+                'retryable' => true,
+                'outcome_unknown' => true,
+                'error' => $exception->getMessage(),
+            ];
             Log::error("Failed to create ticket on Freshdesk", ['error' => $exception->getMessage()]);
             return null;
         }
 
         if ($response->successful()) {
+            $this->lastErrorContext = null;
             return $response->json();
         }
+
+        $this->lastErrorContext = [
+            'action' => 'create_ticket',
+            'status' => $response->status(),
+            'reason' => $this->mapStatusToReason($response->status()),
+            'retryable' => $this->isRetryableStatus($response->status()),
+            'outcome_unknown' => false,
+        ];
 
         Log::error("Failed to create ticket on Freshdesk", [
             'status' => $response->status(),
@@ -292,6 +314,31 @@ class FreshdeskApiService
         ]);
 
         return null;
+    }
+
+    /**
+     * Reconcile a POST operation by its deterministic marker before retrying.
+     */
+    public function findTicketByOperationMarker(string $marker): ?array
+    {
+        if (empty($this->domain) || empty($this->apiKey)) {
+            throw new \RuntimeException('Freshdesk credentials are missing.');
+        }
+
+        $response = Http::withBasicAuth($this->apiKey, 'X')
+            ->timeout(30)
+            ->get("https://{$this->domain}/api/v2/search/tickets", [
+                'query' => "\"tag:'{$marker}'\"",
+            ]);
+
+        if (!$response->successful()) {
+            throw new \RuntimeException(
+                "Freshdesk marker reconciliation failed (status={$response->status()})."
+            );
+        }
+
+        $results = $response->json('results');
+        return is_array($results) && isset($results[0]) ? $results[0] : null;
     }
 
     /**

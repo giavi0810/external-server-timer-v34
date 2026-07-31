@@ -4,56 +4,74 @@ namespace App\Jobs;
 
 use App\Models\TicketEvent;
 use App\Models\Ticket;
-use App\Services\Sla\AppTimerSyncService;
+use App\Models\TicketLogicOutbox;
+use App\Models\FreshdeskOutboundOperation;
 use App\Services\Sla\TicketReplayService;
 use App\Services\SlaCalculationService;
-use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
-class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
+class ProcessTicketEventJob implements ShouldQueue
 {
     use Queueable;
 
     public int $timeout = 105;
     public int $tries = 4;
     public array $backoff = [15, 30, 60];
-    public int $uniqueFor = 120;
-
     protected int $ticketId;
     protected bool $isRecoveryDispatch;
     protected bool $replayAll;
+    protected ?string $outboxToken;
+    protected ?int $targetGeneration;
+    protected ?int $syncEpoch;
 
-    public function __construct(int $ticketId, bool $isRecoveryDispatch = false, bool $replayAll = false)
+    public function __construct(
+        int $ticketId,
+        bool $isRecoveryDispatch = false,
+        bool $replayAll = false,
+        ?string $outboxToken = null,
+        ?int $targetGeneration = null,
+        ?int $syncEpoch = null
+    )
     {
         $this->ticketId = $ticketId;
         $this->isRecoveryDispatch = $isRecoveryDispatch;
         $this->replayAll = $replayAll;
-    }
-
-    public function uniqueId(): string
-    {
-        $prefix = $this->replayAll
-            ? 'ticket_replay_'
-            : ($this->isRecoveryDispatch ? 'ticket_recovery_' : 'ticket_');
-
-        return $prefix . $this->ticketId;
+        $this->outboxToken = $outboxToken;
+        $this->targetGeneration = $targetGeneration;
+        $this->syncEpoch = $syncEpoch;
     }
 
     public function handle(SlaCalculationService $slaService, ?TicketReplayService $replayService = null): void
     {
         $startTime = microtime(true);
+
+        if ($this->outboxToken !== null && !$this->claimLogicOutbox()) {
+            Log::notice('Stale ticket logic delivery ignored', $this->jobContext());
+            return;
+        }
+
         $lock = Cache::lock("ticket_processing:{$this->ticketId}", $this->timeout + 15);
 
         if (!$lock->get()) {
             Log::info('Ticket is already being processed, dispatching delayed retry job', [
                 'ticket_id' => $this->ticketId,
             ]);
-            self::dispatch($this->ticketId, $this->isRecoveryDispatch, $this->replayAll)
-                ->delay(now()->addSeconds(5));
+            if ($this->outboxToken !== null) {
+                TicketLogicOutbox::query()
+                    ->where('ticket_id', $this->ticketId)
+                    ->where('lease_token', $this->outboxToken)
+                    ->where('requested_generation', '>=', $this->targetGeneration)
+                    ->update([
+                        'state' => $this->replayAll ? 'replaying' : 'dispatched',
+                        'visibility_at' => now()->addSeconds(10),
+                    ]);
+                $this->release(5);
+            }
             return;
         }
 
@@ -62,7 +80,7 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
                 'ticket_id' => $this->ticketId,
             ], $this->jobContext()));
 
-            if ($this->replayAll) {
+            if ($this->replayAll && $this->outboxToken === null) {
                 ($replayService ?? app(TicketReplayService::class))->prepare($this->ticketId);
             }
 
@@ -72,6 +90,7 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
                 ->exists();
 
             if ($hasFailedTicketEvent) {
+                $this->blockLogicOutbox('Ticket has failed events requiring manual handling.');
                 Log::warning('Ticket has failed events requiring manual handling, auto-processing skipped', [
                     'ticket_id' => $this->ticketId,
                 ]);
@@ -80,6 +99,7 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
 
             $ticket = Ticket::query()->where('ticket_id', $this->ticketId)->first();
             if (!$ticket) {
+                $this->blockLogicOutbox('Ticket record is missing.');
                 Log::warning('Ticket not found, skipping ticket batch', [
                     'ticket_id' => $this->ticketId,
                 ]);
@@ -95,9 +115,15 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
                 if ($events->isNotEmpty()) {
                     foreach ($events as $event) {
                         try {
-                            $event->markAsProcessing();
                             $shouldSyncTicket = $this->processSingleTicketEvent($event, $slaService) || $shouldSyncTicket;
                             $eventsCount++;
+
+                            if ($this->replayAll
+                                && ($eventsCount >= 50 || microtime(true) - $startTime >= 70)
+                            ) {
+                                $this->dispatchReplayContinuation();
+                                return;
+                            }
                         } catch (\Throwable $exception) {
                             $event->markAsPending();
 
@@ -124,7 +150,7 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
                 $ticket->refresh();
                 $hasCompletedNotSynced = $this->hasProcessedNotSyncedTicketEvents($ticket);
 
-                if ($shouldSyncTicket || $hasCompletedNotSynced) {
+                if ($shouldSyncTicket || $hasCompletedNotSynced || $this->outboxToken !== null) {
                     if (!$this->syncTicketBatch($ticket)) {
                         return;
                     }
@@ -164,6 +190,20 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
         $shouldSyncTicket = false;
 
         DB::transaction(function () use ($event, $slaService, &$shouldSyncTicket) {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(?)', [$this->ticketId]);
+            }
+            $event = TicketEvent::query()->whereKey($event->id)->lockForUpdate()->firstOrFail();
+            if (!in_array($event->status, [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED], true)) {
+                return;
+            }
+            $event->forceFill([
+                'status' => TicketEvent::STATUS_PROCESSING,
+                'locked_at' => now(),
+                'processing_token' => (string) Str::uuid(),
+                'attempt_count' => $event->attempt_count + 1,
+            ])->save();
+
             $ticketData = $event->getTicketData();
             $changes = $event->getFieldChanges();
 
@@ -237,9 +277,27 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
                 TicketEvent::STATUS_QUEUED,
                 TicketEvent::STATUS_PROCESSING,
             ])
+            ->when(
+                $this->targetGeneration !== null,
+                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+            )
             ->update([
                 'status' => TicketEvent::STATUS_FAILED,
+                'locked_at' => null,
+                'processing_token' => null,
             ]);
+
+        if ($this->outboxToken !== null) {
+            TicketLogicOutbox::query()
+                ->where('ticket_id', $this->ticketId)
+                ->where('lease_token', $this->outboxToken)
+                ->where('sync_epoch', $this->syncEpoch)
+                ->update([
+                    'state' => 'blocked',
+                    'visibility_at' => null,
+                    'last_error' => $exception->getMessage(),
+                ]);
+        }
 
         Log::error('ProcessTicketEventJob failed at job level', [
             'ticket_id' => $this->ticketId,
@@ -267,7 +325,12 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
         return TicketEvent::query()
             ->where('ticket_id', $this->ticketId)
             ->whereIn('status', [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED])
+            ->when(
+                $this->targetGeneration !== null,
+                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+            )
             ->orderBy('event_timestamp')
+            ->orderBy('source_order_key')
             ->orderBy('id')
             ->get();
     }
@@ -277,6 +340,10 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
         return TicketEvent::query()
             ->where('ticket_id', $this->ticketId)
             ->whereIn('status', [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED])
+            ->when(
+                $this->targetGeneration !== null,
+                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+            )
             ->exists();
     }
 
@@ -295,12 +362,12 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
 
     protected function syncTicketBatch(Ticket $ticket): bool
     {
+        if ($this->outboxToken !== null) {
+            return $this->acknowledgeAndQueueOutbound($ticket);
+        }
+
         try {
-            if (class_exists(AppTimerSyncService::class)) {
-                app(AppTimerSyncService::class)->syncTicket($ticket);
-            }
             $ticket->touch();
-            usleep(500000); // 0.5s
             return true;
         } catch (\Throwable $exception) {
             $errorMessage = $exception->getMessage();
@@ -357,6 +424,172 @@ class ProcessTicketEventJob implements ShouldQueue, ShouldBeUniqueUntilProcessin
             'connection' => $this->job?->getConnectionName(),
             'dispatch_kind' => $this->isRecoveryDispatch ? 'recovery' : 'normal',
             'replay_all' => $this->replayAll,
+            'target_generation' => $this->targetGeneration,
+            'sync_epoch' => $this->syncEpoch,
         ];
+    }
+
+    protected function claimLogicOutbox(): bool
+    {
+        $states = $this->replayAll ? ['replaying', 'replay_continue_dispatched'] : ['dispatched'];
+        $nextState = $this->replayAll ? 'replaying' : 'processing';
+
+        return TicketLogicOutbox::query()
+            ->where('ticket_id', $this->ticketId)
+            ->whereIn('state', $states)
+            ->where('lease_token', $this->outboxToken)
+            ->where('requested_generation', '>=', $this->targetGeneration)
+            ->where('sync_epoch', $this->syncEpoch)
+            ->update([
+                'state' => $nextState,
+                'visibility_at' => now()->addSeconds(150),
+                'heartbeat_at' => now(),
+            ]) === 1;
+    }
+
+    protected function acknowledgeAndQueueOutbound(Ticket $ticket): bool
+    {
+        return DB::transaction(function () use ($ticket): bool {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(?)', [$this->ticketId]);
+            }
+            $outbox = TicketLogicOutbox::query()
+                ->where('ticket_id', $this->ticketId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$outbox
+                || !hash_equals((string) $outbox->lease_token, (string) $this->outboxToken)
+                || $outbox->sync_epoch !== $this->syncEpoch
+            ) {
+                return false;
+            }
+
+            $blocked = TicketEvent::query()
+                ->where('ticket_id', $this->ticketId)
+                ->where('logic_generation', '<=', $this->targetGeneration)
+                ->whereIn('status', [
+                    TicketEvent::STATUS_PENDING,
+                    TicketEvent::STATUS_QUEUED,
+                    TicketEvent::STATUS_PROCESSING,
+                    TicketEvent::STATUS_FAILED,
+                ])
+                ->exists();
+
+            if ($blocked) {
+                $failed = TicketEvent::query()
+                    ->where('ticket_id', $this->ticketId)
+                    ->where('logic_generation', '<=', $this->targetGeneration)
+                    ->where('status', TicketEvent::STATUS_FAILED)
+                    ->exists();
+                $outbox->forceFill([
+                    'state' => $failed ? 'blocked' : $outbox->state,
+                    'last_error' => $failed ? 'One or more ticket events failed.' : null,
+                ])->save();
+                return false;
+            }
+
+            $hasNewGeneration = $outbox->requested_generation > $this->targetGeneration;
+            $replayPending = $outbox->dispatch_kind === 'replay' && $hasNewGeneration;
+            if (!$hasNewGeneration) {
+                $idempotencyKey = implode(':', [
+                    'sla-sync',
+                    $this->ticketId,
+                    $this->targetGeneration,
+                    $this->syncEpoch,
+                ]);
+                FreshdeskOutboundOperation::query()->firstOrCreate(
+                    ['idempotency_key' => $idempotencyKey],
+                    [
+                        'operation_id' => (string) Str::uuid(),
+                        'ticket_id' => $this->ticketId,
+                        'operation_type' => 'sync_sla',
+                        'coalesce_key' => 'sla-sync',
+                        'generation' => $this->targetGeneration,
+                        'sync_epoch' => $this->syncEpoch,
+                        'operation_version' => 1,
+                        'state' => 'ready',
+                        'available_at' => now(),
+                    ]
+                );
+            }
+            $outbox->forceFill([
+                'acked_generation' => max($outbox->acked_generation, $this->targetGeneration),
+                'state' => $hasNewGeneration
+                    ? ($replayPending ? 'replay_requested' : 'ready')
+                    : 'completed',
+                'dispatch_kind' => $hasNewGeneration && $replayPending ? 'replay' : 'normal',
+                'available_at' => $hasNewGeneration ? now()->addSeconds(20) : $outbox->available_at,
+                'lease_token' => null,
+                'visibility_at' => null,
+                'heartbeat_at' => now(),
+                'last_error' => null,
+            ])->save();
+
+            $ticket->touch();
+            return true;
+        });
+    }
+
+    protected function dispatchReplayContinuation(): void
+    {
+        if ($this->outboxToken === null) {
+            return;
+        }
+
+        $newToken = (string) Str::uuid();
+        $rotated = TicketLogicOutbox::query()
+            ->where('ticket_id', $this->ticketId)
+            ->where('state', 'replaying')
+            ->where('lease_token', $this->outboxToken)
+            ->where('requested_generation', $this->targetGeneration)
+            ->where('sync_epoch', $this->syncEpoch)
+            ->update([
+                'state' => 'replay_continue_dispatched',
+                'lease_token' => $newToken,
+                'visibility_at' => now()->addSeconds(150),
+                'heartbeat_at' => now(),
+            ]);
+
+        if ($rotated !== 1) {
+            return;
+        }
+
+        try {
+            self::dispatch(
+                $this->ticketId,
+                true,
+                true,
+                $newToken,
+                $this->targetGeneration,
+                $this->syncEpoch
+            )->onQueue('ticket-logic');
+        } catch (\Throwable $exception) {
+            TicketLogicOutbox::query()
+                ->where('ticket_id', $this->ticketId)
+                ->where('state', 'replay_continue_dispatched')
+                ->where('lease_token', $newToken)
+                ->update([
+                    'visibility_at' => now()->addSeconds(5),
+                    'last_error' => $exception->getMessage(),
+                ]);
+        }
+    }
+
+    protected function blockLogicOutbox(string $reason): void
+    {
+        if ($this->outboxToken === null) {
+            return;
+        }
+
+        TicketLogicOutbox::query()
+            ->where('ticket_id', $this->ticketId)
+            ->where('lease_token', $this->outboxToken)
+            ->where('sync_epoch', $this->syncEpoch)
+            ->update([
+                'state' => 'blocked',
+                'visibility_at' => null,
+                'last_error' => $reason,
+            ]);
     }
 }

@@ -2,7 +2,7 @@
 
 namespace App\Services\Sla;
 
-use App\Jobs\ProcessTicketEventJob;
+use App\Services\Queue\TicketLogicOutboxService;
 use App\Models\FreshdeskGroup;
 use App\Models\Ticket;
 use App\Models\TicketEvent;
@@ -13,7 +13,8 @@ use Illuminate\Support\Facades\DB;
 class BatchTicketEventService
 {
     public function __construct(
-        private readonly FreshdeskEventNormalizer $eventNormalizer
+        private readonly FreshdeskEventNormalizer $eventNormalizer,
+        private readonly TicketLogicOutboxService $logicOutbox
     ) {
     }
 
@@ -42,11 +43,6 @@ class BatchTicketEventService
             if ($groupResult['accepted_count'] > 0) {
                 $dispatches[(int) $ticketId] = $groupResult['replay_required'];
             }
-        }
-
-        foreach ($dispatches as $ticketId => $replayRequired) {
-            ProcessTicketEventJob::dispatch($ticketId, $replayRequired, $replayRequired)
-                ->delay(now()->addSecond());
         }
 
         usort($results, fn (array $a, array $b) => $a['index'] <=> $b['index']);
@@ -144,6 +140,11 @@ class BatchTicketEventService
                 $results[] = $this->result($item, 'duplicate', $idempotencyKey);
                 continue;
             }
+
+            $insertedEvent = TicketEvent::query()
+                ->where('idempotency_key', $idempotencyKey)
+                ->firstOrFail();
+            $this->logicOutbox->requestForEvent($insertedEvent, $isLate);
 
             $acceptedCount++;
             $replayRequired = $replayRequired || $isLate;

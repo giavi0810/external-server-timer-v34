@@ -73,11 +73,11 @@ class StatusChangedHandler
 
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
-        if ($ttrMetric->lastest_due_date_ttr) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->lastest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        if ($ttrMetric->latest_due_date_ttr) {
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         }
-        if ($rtMetric->lastest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->lastest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        if ($rtMetric->latest_due_date_rt) {
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
         }
     }
 
@@ -188,12 +188,12 @@ class StatusChangedHandler
 
         $this->timerService->accumulateWaitingTime($statusMetric, $oldStatus, $now);
 
-        if ($ttrMetric->sla_mode !== 'due-driven') {
-            if ($ttrMetric->lastest_due_date_ttr) {
-                $ttrMetric->lastest_due_date_ttr = Carbon::parse($ttrMetric->lastest_due_date_ttr)->addSeconds($waitingDuration);
+        if ($ttrMetric->processing_mode !== 'due-driven') {
+            if ($ttrMetric->latest_due_date_ttr) {
+                $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (!$rtMetric->hasFirstResponse() && $rtMetric->lastest_due_date_rt) {
-                $rtMetric->lastest_due_date_rt = Carbon::parse($rtMetric->lastest_due_date_rt)->addSeconds($waitingDuration);
+            if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
             }
         } else {
             $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
@@ -236,12 +236,12 @@ class StatusChangedHandler
 
         $this->timerService->accumulateWaitingTime($statusMetric, $oldStatus, $now);
 
-        if ($ttrMetric->sla_mode !== 'due-driven') {
-            if ($ttrMetric->lastest_due_date_ttr) {
-                $ttrMetric->lastest_due_date_ttr = Carbon::parse($ttrMetric->lastest_due_date_ttr)->addSeconds($waitingDuration);
+        if ($ttrMetric->processing_mode !== 'due-driven') {
+            if ($ttrMetric->latest_due_date_ttr) {
+                $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (!$rtMetric->hasFirstResponse() && $rtMetric->lastest_due_date_rt) {
-                $rtMetric->lastest_due_date_rt = Carbon::parse($rtMetric->lastest_due_date_rt)->addSeconds($waitingDuration);
+            if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
             }
         } else {
             $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
@@ -288,7 +288,7 @@ class StatusChangedHandler
         $ticket->resolved_at = null;
         $statusMetric->resolution_started_at = $now;
 
-        if ($ttrMetric->sla_mode === 'due-driven') {
+        if ($ttrMetric->processing_mode === 'due-driven') {
             $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
             if ($groupLayer) {
                 $aggregateTimer = $ticket->getOrCreateGroupMetric($groupLayer, null);
@@ -302,14 +302,14 @@ class StatusChangedHandler
                 }
             }
         } else {
-            if ($ttrMetric->lastest_due_date_ttr) {
-                $ttrMetric->lastest_due_date_ttr = Carbon::parse($ttrMetric->lastest_due_date_ttr)->addSeconds($closedDuration);
+            if ($ttrMetric->latest_due_date_ttr) {
+                $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($closedDuration);
             }
         }
 
         if (!$rtMetric->hasFirstResponse()) {
-            if ($ttrMetric->sla_mode !== 'due-driven' && $rtMetric->lastest_due_date_rt) {
-                $rtMetric->lastest_due_date_rt = Carbon::parse($rtMetric->lastest_due_date_rt)->addSeconds($closedDuration);
+            if ($ttrMetric->processing_mode !== 'due-driven' && $rtMetric->latest_due_date_rt) {
+                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($closedDuration);
             }
             $rtMetric->status = 'running';
             $rtMetric->started_at = $now;

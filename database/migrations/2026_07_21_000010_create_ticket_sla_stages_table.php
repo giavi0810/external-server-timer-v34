@@ -17,7 +17,7 @@ return new class extends Migration
             $table->unsignedInteger('priority_stage_number')->nullable();
             $table->string('trigger_type', 50);
             $table->string('priority', 50);
-            $table->string('sla_mode', 50);
+            $table->string('processing_mode', 50);
             $table->timestampTz('opened_at');
             $table->timestampTz('checkpoint_at')->nullable();
             $table->unsignedBigInteger('opened_by_event_id');
@@ -42,7 +42,7 @@ return new class extends Migration
         if (DB::getDriverName() === 'pgsql') {
             DB::statement("ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_trigger_check CHECK (trigger_type IN ('initial', 'priority_change', 'due_date_change', 'reopen'))");
             DB::statement("ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_priority_check CHECK (priority IN ('Urgent', 'High', 'Medium', 'Low'))");
-            DB::statement("ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_mode_check CHECK (sla_mode IN ('priority-driven', 'due-driven'))");
+            DB::statement("ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_mode_check CHECK (processing_mode IN ('priority-driven', 'due-driven'))");
             DB::statement('ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_number_check CHECK (sequence_number > 0 AND (priority_stage_number IS NULL OR priority_stage_number > 0))');
             DB::statement('ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_time_check CHECK (checkpoint_at IS NULL OR checkpoint_at >= opened_at)');
             DB::statement('ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_checkpoint_event_check CHECK ((checkpoint_at IS NULL) = (checkpoint_event_id IS NULL))');

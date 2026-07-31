@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Redis;
+use App\Services\Webhooks\DurableWebhookSpool;
 use Throwable;
 
 class HealthCheckController extends Controller
@@ -15,12 +16,13 @@ class HealthCheckController extends Controller
      * Check Redis and Queue status.
      * GET /api/health
      */
-    public function check(): JsonResponse
+    public function check(DurableWebhookSpool $spool): JsonResponse
     {
         $status = 'healthy';
         $details = [
             'redis' => ['status' => 'unknown'],
             'queue' => ['status' => 'unknown'],
+            'freshdesk_spool' => ['status' => 'unknown'],
         ];
 
         // 1. Check Redis connection
@@ -42,6 +44,32 @@ class HealthCheckController extends Controller
                 'error' => 'Connection failed',
             ];
             Log::error('Health Check - Redis error: ' . $e->getMessage());
+        }
+
+        try {
+            $root = (string) config('freshdesk_spool.root');
+            $writablePath = is_dir($root) ? $root : dirname($root);
+            $counts = [];
+            foreach (['ready', 'enqueued', 'processing', 'committed-gc', 'quarantine'] as $state) {
+                $count = count($spool->findFiles($state, 10001));
+                $counts[$state] = $count > 10000 ? '10000+' : $count;
+            }
+            $writable = is_dir($writablePath) && is_writable($writablePath);
+            $details['freshdesk_spool'] = [
+                'status' => $writable ? 'healthy' : 'unhealthy',
+                'writable' => $writable,
+                'free_bytes' => @disk_free_space($writablePath) ?: null,
+                'counts' => $counts,
+            ];
+            if (!$writable) {
+                $status = 'unhealthy';
+            }
+        } catch (Throwable $e) {
+            $status = 'unhealthy';
+            $details['freshdesk_spool'] = [
+                'status' => 'unhealthy',
+                'error' => 'Unable to inspect durable spool',
+            ];
         }
 
         // 2. Check Queue connection & pending size

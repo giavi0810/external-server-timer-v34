@@ -24,6 +24,9 @@ class TicketReplayService
     public function prepare(int $ticketId): void
     {
         DB::transaction(function () use ($ticketId): void {
+            if (DB::getDriverName() === 'pgsql') {
+                DB::select('SELECT pg_advisory_xact_lock(?)', [$ticketId]);
+            }
             $ticket = Ticket::query()->where('ticket_id', $ticketId)->lockForUpdate()->firstOrFail();
             $creationEvent = TicketEvent::query()
                 ->where('ticket_id', $ticketId)
@@ -70,6 +73,7 @@ class TicketReplayService
                 'last_error' => null,
                 'locked_at' => null,
                 'processed_at' => null,
+                'processing_token' => null,
             ]);
         });
     }

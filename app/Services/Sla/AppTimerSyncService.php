@@ -180,8 +180,8 @@ class AppTimerSyncService
         $currentResoSeconds = max(0, (int) ($statusMetric->resolution_total_seconds ?? 0));
 
         return [
-            'db' => $ttrMetric->lastest_due_date_ttr?->toIso8601ZuluString(),
-            'fb' => $rtMetric->lastest_due_date_rt?->toIso8601ZuluString(),
+            'db' => $ttrMetric->latest_due_date_ttr?->toIso8601ZuluString(),
+            'fb' => $rtMetric->latest_due_date_rt?->toIso8601ZuluString(),
             'gr' => $groupData,
             'wt' => [
                 'tw' => max(0, $statusMetric->waiting_total_seconds ?? 0) * 1000,
@@ -235,15 +235,15 @@ class AppTimerSyncService
         $rtTotal = max(0, (int) $rtMetric->total_seconds);
         $rtOverdue = $rtUsed > $rtTotal
             || (!$rtMetric->hasFirstResponse()
-                && $rtMetric->lastest_due_date_rt
-                && now()->greaterThan($rtMetric->lastest_due_date_rt));
+                && $rtMetric->latest_due_date_rt
+                && now()->greaterThan($rtMetric->latest_due_date_rt));
         $rtDiff = $rtTotal - $rtUsed;
 
         $ttrUsed = $this->effectiveTtrUsed($ticket, $ttrMetric);
         $ttrTotal = max(0, (int) $ttrMetric->total_seconds);
         $closedAfterDue = $ticket->closed_at
-            && $ttrMetric->lastest_due_date_ttr
-            && $ticket->closed_at->greaterThan($ttrMetric->lastest_due_date_ttr);
+            && $ttrMetric->latest_due_date_ttr
+            && $ticket->closed_at->greaterThan($ttrMetric->latest_due_date_ttr);
         $ttrOverdue = $ttrUsed > $ttrTotal || $closedAfterDue;
         $ttrDiff = $ttrTotal - $ttrUsed;
 
@@ -271,7 +271,7 @@ class AppTimerSyncService
             $failedMetric = $firstFailedMetric->metrics->first();
             $fields['cf_fail_time'] = $failedMetric->overdue_at->toIso8601ZuluString();
             $fields['cf_fail_stage'] = 'Stage ' . $firstFailedMetric->sequence_number;
-            $fields['cf_fail_flow'] = $firstFailedMetric->sla_mode;
+            $fields['cf_fail_flow'] = $firstFailedMetric->processing_mode;
         }
 
         $layerFields = ['L1' => 'l1', 'L2' => 'l2', 'L3' => 'l3', 'L4' => 'l4'];
