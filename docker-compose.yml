@@ -225,6 +225,39 @@ services:
             - postgres
             - redis
 
+    durable-dispatcher:
+        image: timer-v34-app:latest
+        container_name: timer-v34-durable-dispatcher
+        restart: always
+        security_opt:
+            - no-new-privileges:true
+        working_dir: /var/www/html
+        user: www-data
+        command:
+            - php
+            - artisan
+            - durable-dispatch:work
+            - --spool-limit=50
+            - --logic-limit=50
+            - --outbound-limit=50
+            - --idle-sleep=1
+            - --max-backoff=30
+            - --max-time=3600
+            - --memory=128
+        env_file:
+            - path: .env
+              required: false
+        environment:
+            <<: *worker-environment
+            CACHE_STORE: file
+        volumes:
+            - laravel-v34-storage:/var/www/html/storage
+        networks:
+            - timer-v34-network
+        depends_on:
+            - postgres
+            - redis
+
     postgres:
         image: postgres:16-alpine
         container_name: timer-v34-postgres
