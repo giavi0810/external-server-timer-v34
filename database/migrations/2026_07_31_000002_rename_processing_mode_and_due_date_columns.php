@@ -32,26 +32,10 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (DB::getDriverName() === 'pgsql') {
-            DB::statement('ALTER TABLE ticket_ttr_metrics DROP CONSTRAINT IF EXISTS ticket_ttr_metrics_processing_mode_check');
-            DB::statement('ALTER TABLE ticket_sla_stages DROP CONSTRAINT IF EXISTS ticket_sla_stages_mode_check');
-        }
-
-        $this->renameIfPresent('ticket_ttr_metrics', 'processing_mode', 'sla_mode');
-        $this->renameIfPresent('ticket_ttr_metrics', 'latest_due_date_ttr', 'lastest_due_date_ttr');
-        $this->renameIfPresent('ticket_first_response_metrics', 'latest_due_date_rt', 'lastest_due_date_rt');
-        $this->renameIfPresent('ticket_sla_stages', 'processing_mode', 'sla_mode');
-
-        if (DB::getDriverName() === 'pgsql') {
-            DB::statement(
-                "ALTER TABLE ticket_ttr_metrics ADD CONSTRAINT ticket_ttr_metrics_sla_mode_check "
-                ."CHECK (sla_mode IN ('priority-driven', 'due-driven'))"
-            );
-            DB::statement(
-                "ALTER TABLE ticket_sla_stages ADD CONSTRAINT ticket_sla_stages_mode_check "
-                ."CHECK (sla_mode IN ('priority-driven', 'due-driven'))"
-            );
-        }
+        // The base V34 migrations already create the canonical column names.
+        // Reverting them to the legacy/misspelled names would corrupt a fresh
+        // installation, so this compatibility migration is intentionally
+        // forward-only.
     }
 
     private function renameIfPresent(string $table, string $from, string $to): void

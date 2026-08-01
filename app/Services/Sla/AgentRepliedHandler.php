@@ -63,7 +63,7 @@ class AgentRepliedHandler
 
             $rtMetric->save();
 
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $now->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $now->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
             
             Log::info("AgentRepliedHandler: RT ended by Agent replied", [
                 'ticket_id' => $ticketId,
@@ -72,9 +72,9 @@ class AgentRepliedHandler
         }
         
         if ($actorLabel) {
-            $this->timelineService->appendTicketEventLog($ticket, 'a', 'rep', $now->format('Y-m-d\TH:i:s\Z'), $actorLabel);
+            $this->timelineService->appendTicketEventLog($ticket, 'a', 'rep', $now->format('Y-m-d\TH:i:s\Z'), $actorLabel, $event);
         } else {
-            $this->timelineService->appendTicketEventLog($ticket, 'a', 'rep', $now->format('Y-m-d\TH:i:s\Z'));
+            $this->timelineService->appendTicketEventLog($ticket, 'a', 'rep', $now->format('Y-m-d\TH:i:s\Z'), null, $event);
         }
     }
 }

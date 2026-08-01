@@ -7,6 +7,7 @@ use App\Models\FreshdeskGroup;
 use App\Models\TicketEvent;
 use App\Models\Ticket;
 use App\Services\FreshdeskApiService;
+use App\Services\FreshdeskGroupSyncService;
 use App\Services\Sla\BatchTicketEventService;
 use App\Services\Webhooks\FreshdeskEventNormalizer;
 use App\Services\Webhooks\DurableWebhookSpool;
@@ -17,6 +18,7 @@ use Carbon\Carbon;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -25,7 +27,8 @@ class WebhookController extends Controller
     public function __construct(
         protected FreshdeskApiService $freshdeskService,
         protected FreshdeskEventNormalizer $eventNormalizer,
-        protected DurableWebhookSpool $webhookSpool
+        protected DurableWebhookSpool $webhookSpool,
+        protected FreshdeskGroupSyncService $groupSync
     ) {
     }
 
@@ -76,6 +79,12 @@ class WebhookController extends Controller
         try {
             $validated = $request->validated();
             $ticketId = (int) $validated['ticket_id'];
+
+            // The durable worker performs this preflight before its transaction.
+            // Keep direct/non-spool mode safe as well.
+            if (DB::transactionLevel() === 0) {
+                $this->groupSync->ensurePayloadGroupsKnown($request->all());
+            }
 
             if (Cache::has("migration_lock_{$ticketId}")) {
                 Log::info("Migration Lock: Webhook ignored for ticket {$ticketId}");

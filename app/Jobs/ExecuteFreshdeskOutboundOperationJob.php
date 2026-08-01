@@ -71,6 +71,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
                 'sync_sla' => $this->syncSla($syncService, $ticket),
                 'reopen_ticket' => $this->reopenTicket($freshdesk, $operation),
                 'create_followup_ticket' => $this->createFollowupTicket($freshdesk, $operation),
+                'change_due_date' => $this->changeDueDate($freshdesk, $operation),
                 default => throw new \RuntimeException(
                     "Unsupported outbound operation: {$operation->operation_type}"
                 ),
@@ -218,6 +219,122 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         }
 
         return (string) $remoteId;
+    }
+
+    private function changeDueDate(
+        FreshdeskApiService $freshdesk,
+        FreshdeskOutboundOperation $operation
+    ): string {
+        $marker = $this->marker();
+        $remote = $freshdesk->getTicket($operation->ticket_id);
+        if (!is_array($remote)) {
+            throw new \RuntimeException('Unable to reconcile Freshdesk ticket before Due Date update.');
+        }
+
+        $tags = is_array($remote['tags'] ?? null) ? $remote['tags'] : [];
+        if (in_array($marker, $tags, true)) {
+            return (string) $operation->ticket_id;
+        }
+
+        $customFields = is_array($remote['custom_fields'] ?? null)
+            ? $remote['custom_fields']
+            : [];
+        $countKey = $this->customFieldKey(
+            $customFields,
+            ['cf_number_of_due_date_changes'],
+            'cf_number_of_due_date_changes'
+        );
+        $processingModeKey = $this->customFieldKey(
+            $customFields,
+            ['cf_processing_mode', 'cf_sla_mode'],
+            'cf_processing_mode'
+        );
+        $phaseKey = $this->customFieldKey(
+            $customFields,
+            ['cf_processing_phase'],
+            'cf_processing_phase'
+        );
+        $reasonKey = $this->customFieldKey(
+            $customFields,
+            ['cf_change_due_reason'],
+            'cf_change_due_reason'
+        );
+        $nextCount = max(0, (int) ($customFields[$countKey] ?? 0)) + 1;
+        $dueDate = (string) ($operation->payload['new_due_date'] ?? '');
+        if ($dueDate === '') {
+            throw new \RuntimeException('Due Date outbound operation is missing new_due_date.');
+        }
+
+        $updatedFields = [
+            $countKey => $nextCount,
+            $processingModeKey => 'due-driven',
+        ];
+        if (!empty($operation->payload['processing_phase'])) {
+            $updatedFields[$phaseKey] = $operation->payload['processing_phase'];
+        }
+        if (!empty($operation->payload['reason'])) {
+            $updatedFields[$reasonKey] = $operation->payload['reason'];
+        }
+
+        $tagPattern = '/^due_date_change(?:\s*\((\d+)\))?$/i';
+        $filteredTags = array_values(array_filter(
+            $tags,
+            static fn (mixed $tag): bool => !preg_match($tagPattern, trim((string) $tag))
+        ));
+        $dueDateTag = "due_date_change ({$nextCount})";
+        $filteredTags[] = $dueDateTag;
+        $filteredTags[] = $marker;
+
+        if (!$freshdesk->updateTicket($operation->ticket_id, [
+            'due_by' => $dueDate,
+            'custom_fields' => $updatedFields,
+            'tags' => array_values(array_unique($filteredTags)),
+        ])) {
+            throw new \RuntimeException('Freshdesk Due Date PUT failed.');
+        }
+
+        $noteLines = [
+            "Thay đổi Due Date lần {$nextCount}",
+            "- Due Date mới: {$dueDate}",
+            '- Processing Mode: due-driven',
+            "- Tag: {$dueDateTag}",
+            "- Operation: {$marker}",
+        ];
+        if (!empty($operation->payload['processing_phase'])) {
+            $noteLines[] = '- Processing Phase: '.$operation->payload['processing_phase'];
+        }
+        if (!empty($operation->payload['reason'])) {
+            $noteLines[] = '- Lý do: '.$operation->payload['reason'];
+        }
+        if (!empty($operation->payload['agent_name'])) {
+            $noteLines[] = '- Người thực hiện: '.$operation->payload['agent_name'];
+        }
+
+        if (!$freshdesk->addTicketNote(
+            $operation->ticket_id,
+            implode("\n", $noteLines),
+            true
+        )) {
+            Log::warning('Freshdesk Due Date updated but audit note could not be added', [
+                'operation_id' => $operation->operation_id,
+                'ticket_id' => $operation->ticket_id,
+            ]);
+        }
+
+        return (string) $operation->ticket_id;
+    }
+
+    private function customFieldKey(array $customFields, array $prefixes, string $fallback): string
+    {
+        foreach (array_keys($customFields) as $key) {
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with((string) $key, $prefix)) {
+                    return (string) $key;
+                }
+            }
+        }
+
+        return $fallback;
     }
 
     private function marker(): string

@@ -24,8 +24,14 @@ class TimelineService
     /**
      * Ghi log sự kiện vào bảng lịch sử và gom chuỗi bắn lên Freshdesk.
      */
-    public function appendTicketEventLog(Ticket $ticket, string $key, $value, ?string $timestamp = null, ?string $label = null): void
-    {
+    public function appendTicketEventLog(
+        Ticket $ticket,
+        string $key,
+        mixed $value,
+        ?string $timestamp = null,
+        ?string $label = null,
+        ?TicketEvent $sourceEvent = null
+    ): void {
         $historyValue = $value;
         if ($historyValue instanceof Carbon) {
             $historyValue = $historyValue->format('Y-m-d\TH:i:s\Z');
@@ -37,16 +43,7 @@ class TimelineService
 
         $historyOccurrence = Carbon::parse($timestamp ?? now());
 
-        $exists = false;
-        if (in_array($key, ['d', 'fr', 'a', 'ct'])) {
-            $exists = TicketHistory::where('ticket_id', $ticket->ticket_id)
-                ->where('event_key', $key)
-                ->where('event_value', $historyValue)
-                ->exists();
-        }
-
-        if (!$exists) {
-            $sourceEvent = TicketEvent::where('ticket_id', $ticket->ticket_id)
+        $sourceEvent ??= TicketEvent::where('ticket_id', $ticket->ticket_id)
                 ->where('event_timestamp', $historyOccurrence)
                 ->latest('id')
                 ->first()
@@ -56,30 +53,35 @@ class TimelineService
                     ->latest('id')
                     ->first();
 
-            if (!$sourceEvent) {
-                Log::warning('Ticket history skipped because no source event exists', [
-                    'ticket_id' => $ticket->ticket_id,
-                    'key' => $key,
-                ]);
-                return;
-            }
-
-            TicketHistory::create([
+        if (!$sourceEvent) {
+            Log::warning('Ticket history skipped because no source event exists', [
                 'ticket_id' => $ticket->ticket_id,
+                'key' => $key,
+            ]);
+
+            return;
+        }
+
+        TicketHistory::firstOrCreate(
+            [
                 'ticket_event_id' => $sourceEvent->id,
                 'event_key' => $key,
+            ],
+            [
+                'ticket_id' => $ticket->ticket_id,
                 'event_value' => $historyValue,
                 'label' => $label,
                 'occurred_at' => $historyOccurrence,
                 'created_at' => $historyOccurrence,
                 'updated_at' => now(),
-            ]);
+            ]
+        );
 
-            Log::debug("TicketEvent history logged to History Table", [
-                'ticket_id' => $ticket->ticket_id,
-                'key' => $key,
-            ]);
-        }
+        Log::debug('TicketEvent history logged to History Table', [
+            'ticket_id' => $ticket->ticket_id,
+            'ticket_event_id' => $sourceEvent->id,
+            'key' => $key,
+        ]);
     }
 
     /**

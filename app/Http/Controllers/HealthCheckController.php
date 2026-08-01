@@ -5,9 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Redis;
-use App\Services\Webhooks\DurableWebhookSpool;
 use Throwable;
 
 class HealthCheckController extends Controller
@@ -16,20 +14,21 @@ class HealthCheckController extends Controller
      * Check Redis and Queue status.
      * GET /api/health
      */
-    public function check(DurableWebhookSpool $spool): JsonResponse
+    public function check(): JsonResponse
     {
         $status = 'healthy';
         $details = [
             'redis' => ['status' => 'unknown'],
-            'queue' => ['status' => 'unknown'],
             'freshdesk_spool' => ['status' => 'unknown'],
         ];
+        $redisHealthy = false;
 
         // 1. Check Redis connection
         try {
-            $pong = Redis::connection()->ping();
+            $pong = Redis::connection('health')->ping();
             if ($pong === true || $pong === '+PONG' || $pong === 'PONG' || !empty($pong)) {
                 $details['redis']['status'] = 'healthy';
+                $redisHealthy = true;
             } else {
                 $status = 'unhealthy';
                 $details['redis'] = [
@@ -49,17 +48,11 @@ class HealthCheckController extends Controller
         try {
             $root = (string) config('freshdesk_spool.root');
             $writablePath = is_dir($root) ? $root : dirname($root);
-            $counts = [];
-            foreach (['ready', 'enqueued', 'processing', 'committed-gc', 'quarantine'] as $state) {
-                $count = count($spool->findFiles($state, 10001));
-                $counts[$state] = $count > 10000 ? '10000+' : $count;
-            }
             $writable = is_dir($writablePath) && is_writable($writablePath);
             $details['freshdesk_spool'] = [
                 'status' => $writable ? 'healthy' : 'unhealthy',
                 'writable' => $writable,
                 'free_bytes' => @disk_free_space($writablePath) ?: null,
-                'counts' => $counts,
             ];
             if (!$writable) {
                 $status = 'unhealthy';
@@ -72,22 +65,12 @@ class HealthCheckController extends Controller
             ];
         }
 
-        // 2. Check Queue connection & pending size
-        try {
-            $queueSize = Queue::size();
-            $details['queue'] = [
-                'status' => 'healthy',
-                'size' => $queueSize,
-                'connection' => config('queue.default'),
-            ];
-        } catch (Throwable $e) {
-            $status = 'unhealthy';
-            $details['queue'] = [
-                'status' => 'unhealthy',
-                'error' => 'Connection failed',
-            ];
-            Log::error('Health Check - Queue error: ' . $e->getMessage());
-        }
+        $details['queue'] = [
+            'status' => $redisHealthy ? 'healthy' : 'unhealthy',
+            'connection' => config('queue.default'),
+            'size' => null,
+            'note' => 'Backlog counting is excluded from the lightweight health endpoint.',
+        ];
 
         $statusCode = ($status === 'healthy') ? 200 : 503;
 

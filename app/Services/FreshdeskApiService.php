@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class FreshdeskApiService
 {
@@ -115,14 +116,14 @@ class FreshdeskApiService
      * Refresh group mappings from Freshdesk API.
      * GET /api/v2/ticket_fields?type=default_group → parse choices → upsert freshdesk_groups.
      */
-    public function refreshGroupMappings(): void
+    public function refreshGroupMappings(): array
     {
         if (empty($this->domain) || empty($this->apiKey)) {
             Log::warning('Freshdesk API credentials not configured, skipping group refresh', [
                 'domain' => $this->domain,
                 'has_api_key' => !empty($this->apiKey),
             ]);
-            return;
+            throw new RuntimeException('Freshdesk API credentials are not configured.');
         }
 
         $url = "https://{$this->domain}/api/v2/ticket_fields?type=default_group";
@@ -139,13 +140,15 @@ class FreshdeskApiService
                 'status' => $response->status(),
                 'body' => Str::limit($response->body(), 300),
             ]);
-            return;
+            throw new RuntimeException(
+                "Freshdesk ticket_fields API returned HTTP {$response->status()}."
+            );
         }
 
         $fields = $response->json();
         if (!is_array($fields)) {
             Log::warning("Freshdesk ticket_fields API returned unexpected response format");
-            return;
+            throw new RuntimeException('Freshdesk ticket_fields API returned an invalid response.');
         }
 
         foreach ($fields as $field) {
@@ -154,7 +157,7 @@ class FreshdeskApiService
 
                 if (empty($choices)) {
                     Log::warning("Freshdesk group field choices is empty");
-                    return;
+                    throw new RuntimeException('Freshdesk group choices are empty.');
                 }
 
                 $activeGroupIds = [];
@@ -192,9 +195,16 @@ class FreshdeskApiService
                     'active_count' => count($activeGroupIds),
                     'inactive_count' => FreshdeskGroup::where('is_active', false)->count(),
                 ]);
-                break;
+
+                return [
+                    'received_count' => count($choices),
+                    'active_count' => count($activeGroupIds),
+                    'inactive_count' => FreshdeskGroup::where('is_active', false)->count(),
+                ];
             }
         }
+
+        throw new RuntimeException('Freshdesk group field was not found.');
     }
 
 
