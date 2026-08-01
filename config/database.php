@@ -179,6 +179,21 @@ return [
             'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
         ],
 
+        // Health checks must fail fast without changing queue/cache connection
+        // behaviour. Fixed short timeouts keep scheduler processes from piling up
+        // while Redis DNS/network connectivity is unavailable.
+        'health' => [
+            'url' => env('REDIS_URL'),
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+            'username' => env('REDIS_USERNAME'),
+            'password' => env('REDIS_PASSWORD'),
+            'port' => env('REDIS_PORT', '6379'),
+            'database' => env('REDIS_DB', '0'),
+            'timeout' => 2.0,
+            'read_timeout' => 2.0,
+            'max_retries' => 0,
+        ],
+
     ],
 
 ];

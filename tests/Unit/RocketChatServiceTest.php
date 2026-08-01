@@ -210,6 +210,29 @@ class RocketChatServiceTest extends TestCase
         $this->assertSame(1, $audit['attempt_count']);
     }
 
+    public function test_production_failure_tries_at_most_two_channel_candidates(): void
+    {
+        config()->set('services.rocketchat.url', 'http://failed.rocketchat.test');
+        Http::fake([
+            'http://failed.rocketchat.test/api/v1/chat.postMessage' => Http::response([
+                'success' => false,
+            ], 503),
+        ]);
+
+        $this->assertFalse(app(RocketChatService::class)->sendMessage(
+            'Bounded retry test',
+            null,
+            RocketChatDeliveryStatus::EVENT_SYSTEM_ERROR
+        ));
+
+        Http::assertSentCount(2);
+
+        $audit = $this->singleAuditEnvelope();
+        $this->assertSame('failed', $audit['status']);
+        $this->assertSame(503, $audit['http_status']);
+        $this->assertSame(2, $audit['attempt_count']);
+    }
+
     public function test_redis_down_keeps_incident_code_when_rocketchat_delivery_fails(): void
     {
         config([

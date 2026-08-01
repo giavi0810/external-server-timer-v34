@@ -8,9 +8,21 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::command('system-health:redis')->everyThirtySeconds();
-Schedule::command('rocketchat-audit:sync --limit=100')->everyMinute();
-Schedule::command('freshdesk-spool:recover --limit=500')->everyMinute();
-Schedule::command('ticket-events:recover-processing --limit=500')->everyMinute();
-Schedule::command('freshdesk-spool:gc --limit=1000')->hourly();
-Schedule::command('rocketchat-audit:prune')->dailyAt('02:30');
+Schedule::command('system-health:redis')
+    ->everyMinute()
+    ->withoutOverlapping(2);
+Schedule::command('rocketchat-audit:sync --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5);
+Schedule::command('freshdesk-spool:recover --limit=500')
+    ->everyMinute()
+    ->withoutOverlapping(5);
+Schedule::command('ticket-events:recover-processing --limit=500')
+    ->everyMinute()
+    ->withoutOverlapping(5);
+Schedule::command('freshdesk-spool:gc --limit=1000')
+    ->everyMinute()
+    ->withoutOverlapping(5);
+Schedule::command('rocketchat-audit:prune')
+    ->dailyAt('02:30')
+    ->withoutOverlapping(60);
