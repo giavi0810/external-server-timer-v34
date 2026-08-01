@@ -37,3 +37,6 @@ services:
 
   durable-scheduler:
     volumes: *local-app-volumes
+
+  durable-dispatcher:
+    volumes: *local-app-volumes
