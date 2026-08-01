@@ -202,7 +202,7 @@ class RocketChatService
         if (! empty($webhookUrl)) {
             try {
                 $attemptCount++;
-                $response = Http::timeout(5)->post($webhookUrl, [
+                $response = Http::connectTimeout(1)->timeout(3)->post($webhookUrl, [
                     'text' => $text,
                     'attachments' => $attachments,
                 ]);
@@ -231,26 +231,25 @@ class RocketChatService
         }
 
         if (! empty($baseUrl) && ! empty($userId) && ! empty($token)) {
-            $baseUrls = array_unique(array_filter([
-                $baseUrl,
-                str_replace(['localhost', '127.0.0.1'], 'host.docker.internal', $baseUrl),
-                str_replace(['localhost', '127.0.0.1'], '172.17.0.1', $baseUrl),
-                str_replace(['localhost', '127.0.0.1'], '172.22.0.1', $baseUrl),
-            ]));
+            $baseUrls = app()->isProduction()
+                ? [$baseUrl]
+                : array_slice(array_values(array_unique(array_filter([
+                    $baseUrl,
+                    str_replace(['localhost', '127.0.0.1'], 'host.docker.internal', $baseUrl),
+                    str_replace(['localhost', '127.0.0.1'], '172.17.0.1', $baseUrl),
+                    str_replace(['localhost', '127.0.0.1'], '172.22.0.1', $baseUrl),
+                ]))), 0, 2);
             $headers = [
                 'X-User-Id' => $userId,
                 'X-Auth-Token' => $token,
                 'Content-Type' => 'application/json',
             ];
             $cleanChannel = ltrim($channel, '#');
-            $candidates = array_unique([
-                strtolower($cleanChannel),
-                '#'.strtolower($cleanChannel),
+            $candidates = array_slice(array_values(array_unique(array_filter([
                 $channel,
                 $cleanChannel,
-                strtoupper($cleanChannel),
-                '#'.strtoupper($cleanChannel),
-            ]);
+                '#'.$cleanChannel,
+            ]))), 0, 2);
 
             foreach ($baseUrls as $currentBaseUrl) {
                 $endpoint = rtrim($currentBaseUrl, '/').'/api/v1/chat.postMessage';
@@ -258,7 +257,7 @@ class RocketChatService
                 foreach ($candidates as $targetChannel) {
                     try {
                         $attemptCount++;
-                        $response = Http::timeout(3)
+                        $response = Http::connectTimeout(1)->timeout(3)
                             ->withHeaders($headers)
                             ->post($endpoint, [
                                 'channel' => $targetChannel,

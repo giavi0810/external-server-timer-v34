@@ -21,7 +21,7 @@ class MonitorRedisHealthCommand extends Command
         }
 
         try {
-            Redis::connection()->ping();
+            Redis::connection('health')->ping();
             $rocketChat->sendRedisRecoveredAlert();
         } catch (Throwable $exception) {
             Log::warning('Redis health check failed', [
