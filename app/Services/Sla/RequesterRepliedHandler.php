@@ -29,11 +29,14 @@ class RequesterRepliedHandler
         );
         $actorId = $conversation['actor_id'] ?? null;
 
-        $arguments = [$ticket, 'ct', 'rep', $occurredAt->utc()->format('Y-m-d\TH:i:s\Z')];
-        if ($actorId) {
-            $arguments[] = (string) $actorId;
-        }
-        $this->timelineService->appendTicketEventLog(...$arguments);
+        $this->timelineService->appendTicketEventLog(
+            $ticket,
+            'ct',
+            'rep',
+            $occurredAt->utc()->format('Y-m-d\TH:i:s\Z'),
+            $actorId ? (string) $actorId : null,
+            $event
+        );
 
         if (!$ticket->closed_at
             || ($ticket->reopened_at && $ticket->reopened_at->gt($ticket->closed_at))

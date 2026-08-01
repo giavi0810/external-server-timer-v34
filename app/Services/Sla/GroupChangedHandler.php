@@ -105,16 +105,16 @@ class GroupChangedHandler
         $ticket->save();
 
         if (!empty($newGroupName)) {
-            $this->timelineService->appendTicketEventLog($ticket, 'g', $newGroupName, $event->event_timestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'g', $newGroupName, $event->event_timestamp, null, $event);
         }
 
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
         if ($ttrMetric->latest_due_date_ttr) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         }
         if ($rtMetric->latest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         }
     }
 }

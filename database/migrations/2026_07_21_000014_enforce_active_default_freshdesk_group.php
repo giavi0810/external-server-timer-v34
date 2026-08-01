@@ -26,6 +26,11 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('freshdesk_groups');
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(<<<'SQL'
+                ALTER TABLE freshdesk_groups
+                DROP CONSTRAINT IF EXISTS freshdesk_groups_default_active_check
+                SQL);
+        }
     }
 };

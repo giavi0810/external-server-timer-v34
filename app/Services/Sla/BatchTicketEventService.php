@@ -3,9 +3,9 @@
 namespace App\Services\Sla;
 
 use App\Services\Queue\TicketLogicOutboxService;
-use App\Models\FreshdeskGroup;
 use App\Models\Ticket;
 use App\Models\TicketEvent;
+use App\Services\FreshdeskGroupSyncService;
 use App\Services\Webhooks\FreshdeskEventNormalizer;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -14,12 +14,16 @@ class BatchTicketEventService
 {
     public function __construct(
         private readonly FreshdeskEventNormalizer $eventNormalizer,
-        private readonly TicketLogicOutboxService $logicOutbox
+        private readonly TicketLogicOutboxService $logicOutbox,
+        private readonly FreshdeskGroupSyncService $groupSync
     ) {
     }
 
     public function ingest(array $events): array
     {
+        // Resolve newly-created Freshdesk groups before any ticket transaction.
+        $this->groupSync->ensurePayloadsGroupsKnown($events);
+
         $indexedEvents = collect($events)
             ->map(fn (array $event, int $index) => ['index' => $index, 'event' => $event])
             ->sort(function (array $a, array $b): int {
@@ -162,12 +166,6 @@ class BatchTicketEventService
     {
         $data = $event['ticket_data'] ?? [];
         $groupId = $data['group_id'] ?? null;
-        if ($groupId !== null) {
-            FreshdeskGroup::firstOrCreate(
-                ['group_id' => (string) $groupId],
-                ['name' => "Freshdesk Group {$groupId}", 'main_layer' => 'L1', 'is_active' => true]
-            );
-        }
 
         return Ticket::create([
             'ticket_id' => $ticketId,

@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Http\Controllers\WebhookController;
 use App\Http\Requests\FreshdeskWebhookRequest;
+use App\Services\FreshdeskGroupSyncService;
 use App\Services\Webhooks\DurableWebhookSpool;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -25,7 +26,11 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
         $this->onQueue(config('freshdesk_spool.queue'));
     }
 
-    public function handle(DurableWebhookSpool $spool, WebhookController $controller): void
+    public function handle(
+        DurableWebhookSpool $spool,
+        WebhookController $controller,
+        FreshdeskGroupSyncService $groupSync
+    ): void
     {
         try {
             $claim = $spool->claimForProcessing($this->spoolPath, $this->deliveryToken);
@@ -64,6 +69,10 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
             $request->setContainer(app());
             $request->setRedirector(app('redirect'));
             $request->validateResolved();
+
+            // External Freshdesk I/O must complete before opening the PostgreSQL
+            // transaction. Any failure returns the durable file to ready/retry.
+            $groupSync->ensurePayloadGroupsKnown($envelope['payload']);
 
             DB::beginTransaction();
             try {

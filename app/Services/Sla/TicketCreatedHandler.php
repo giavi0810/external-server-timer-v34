@@ -94,24 +94,24 @@ class TicketCreatedHandler
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
 
-        $this->timelineService->appendTicketEventLog($ticket, 'c', $createdAt, $eventTimestamp);
+        $this->timelineService->appendTicketEventLog($ticket, 'c', $createdAt, $eventTimestamp, null, $event);
 
         if (!empty($ticket->ticket_type)) {
-            $this->timelineService->appendTicketEventLog($ticket, 'tp', $ticket->ticket_type, $eventTimestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'tp', $ticket->ticket_type, $eventTimestamp, null, $event);
         }
         $groupName = $ticketData['group_name'] ?? $this->freshdeskService->resolveGroupName($ticket->group_id);
         if (!empty($groupName)) {
-            $this->timelineService->appendTicketEventLog($ticket, 'g', $groupName, $eventTimestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'g', $groupName, $eventTimestamp, null, $event);
         }
 
-        $this->timelineService->appendTicketEventLog($ticket, 's', $this->timerService->getShortStatus($ticket->status), $eventTimestamp);
-        $this->timelineService->appendTicketEventLog($ticket, 'p', $ticket->priority, $eventTimestamp);
+        $this->timelineService->appendTicketEventLog($ticket, 's', $this->timerService->getShortStatus($ticket->status), $eventTimestamp, null, $event);
+        $this->timelineService->appendTicketEventLog($ticket, 'p', $ticket->priority, $eventTimestamp, null, $event);
 
         if ($ttrMetric->latest_due_date_ttr) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $ttrMetric->latest_due_date_ttr->format('Y-m-d\TH:i:s\Z'), $eventTimestamp, null, $event);
         }
         if ($rtMetric->latest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $eventTimestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $eventTimestamp, null, $event);
         }
 
         Log::info("TicketCreatedHandler: hoàn thành ticket #{$ticketId}", [

@@ -208,11 +208,18 @@ class DurableWebhookSpool
         );
         $deleted = 0;
 
-        foreach ($files as $path) {
-            if (@unlink($path)) {
-                $this->syncDirectory(dirname($path));
-                $this->removeEmptyParents(dirname($path), $this->statePath('committed-gc'));
-                $deleted++;
+        foreach (array_chunk($files, 250) as $chunk) {
+            $directories = [];
+            foreach ($chunk as $path) {
+                if (@unlink($path)) {
+                    $directories[dirname($path)] = true;
+                    $deleted++;
+                }
+            }
+
+            foreach (array_keys($directories) as $directory) {
+                $this->syncDirectory($directory);
+                $this->removeEmptyParents($directory, $this->statePath('committed-gc'));
             }
         }
 

@@ -97,9 +97,15 @@ class DueDateChangedHandler
             $rtMetric->latest_due_date_rt = $newFrDue;
         }
 
-        $isAppChange = ($ttrMetric->processing_mode === 'due-driven') && ($oldDue && $newDue->greaterThan($oldDue));
-        
-        $ttrMetric->processing_mode = $isAppChange ? 'due-driven' : 'priority-driven';
+        $customFields = $event->event_data['ticket_data']['custom_fields'] ?? [];
+        $incomingProcessingMode = $this->customFieldByPrefix(
+            $customFields,
+            ['cf_processing_mode', 'cf_sla_mode']
+        );
+        $isDueDriven = $incomingProcessingMode === 'due-driven'
+            || ($incomingProcessingMode === null && $ttrMetric->processing_mode === 'due-driven');
+
+        $ttrMetric->processing_mode = $isDueDriven ? 'due-driven' : 'priority-driven';
         $ttrMetric->save();
         $rtMetric->save();
 
@@ -108,10 +114,10 @@ class DueDateChangedHandler
         $ticket->save();
         $this->recordDueDateStage($ticket, $event, $oldDue, $newDue, $eventAt);
 
-        $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+        $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         
         if ($rtMetric->latest_due_date_rt) {
-            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp);
+            $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         }
 
         Log::info("DueDateChangedHandler: hoàn thành", [
@@ -171,15 +177,20 @@ class DueDateChangedHandler
             'metric_result' => $rt->first_response_at ? 'not_applicable' : 'pending',
         ]);
 
-        $customFields = $event->event_data['ticket_data']['custom_fields'] ?? [];
         TicketDueDateChange::create([
             'ticket_id' => $ticket->ticket_id,
             'ticket_sla_stage_id' => $stage->id,
             'change_number' => ((int) $ticket->dueDateChanges()->max('change_number')) + 1,
             'old_due_at' => $oldDue,
             'new_due_at' => $newDue,
-            'processing_phase' => $customFields['cf_processing_phase'] ?? 'unspecified',
-            'reason_code' => $customFields['cf_change_due_reason'] ?? 'unspecified',
+            'processing_phase' => $this->customFieldByPrefix(
+                $customFields,
+                ['cf_processing_phase']
+            ) ?? 'unspecified',
+            'reason_code' => $this->customFieldByPrefix(
+                $customFields,
+                ['cf_change_due_reason']
+            ) ?? 'unspecified',
             'reason_detail' => null,
             'agent_id' => (int) ($event->event_data['conversation_data']['actor_id'] ?? 0),
             'agent_name' => (string) ($event->event_data['conversation_data']['actor_name'] ?? 'System'),
@@ -240,5 +251,18 @@ class DueDateChangedHandler
                 'rt_total'  => $config->rt_seconds,
             ]);
         }
+    }
+
+    private function customFieldByPrefix(array $customFields, array $prefixes): mixed
+    {
+        foreach ($customFields as $key => $value) {
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with((string) $key, $prefix)) {
+                    return $value;
+                }
+            }
+        }
+
+        return null;
     }
 }
