@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Jobs\ExecuteFreshdeskOutboundOperationJob;
 use App\Models\FreshdeskOutboundOperation;
+use App\Models\SlaPolicy;
 use App\Models\Ticket;
+use App\Models\TicketDueDateChange;
 use App\Models\TicketEvent;
 use App\Models\TicketHistory;
 use App\Services\FreshdeskApiService;
@@ -216,6 +218,79 @@ class ReleaseOneSafetyFixesTest extends TestCase
         $handler->handle($ticket->ticket_id, $event->getTicketData(), $event->getFieldChanges(), $event);
 
         $this->assertSame('due-driven', $ticket->getOrCreateTtrMetric()->fresh()->processing_mode);
+    }
+
+    public function test_due_date_stage_records_custom_fields_from_event_payload(): void
+    {
+        SlaPolicy::create([
+            'ticket_type' => 'VVIP',
+            'priority' => 'High',
+            'version' => 1,
+            'total_seconds' => 28800,
+            'l1_seconds' => 3600,
+            'l2_seconds' => 3600,
+            'l3_seconds' => 7200,
+            'l4_seconds' => 14400,
+            'rt_seconds' => 14400,
+        ]);
+
+        $ticket = Ticket::create([
+            'ticket_id' => 18487,
+            'status' => 'Open',
+            'priority' => 'High',
+            'ticket_type' => 'VVIP',
+            'fd_created_at' => '2026-08-02T02:47:22Z',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'priority-driven',
+            'latest_due_date_ttr' => '2026-08-02T10:47:22Z',
+            'total_seconds' => 28800,
+        ]);
+
+        $event = TicketEvent::create([
+            'ticket_id' => $ticket->ticket_id,
+            'idempotency_key' => hash('sha256', 'due-date-stage-custom-fields'),
+            'event_type' => TicketEvent::EVENT_DUE_DATE_CHANGED,
+            'event_data' => [
+                'ticket_data' => [
+                    'due_by' => '2026-08-08T16:59:00Z',
+                    'custom_fields' => [
+                        'cf_processing_mode_2885394' => 'due-driven',
+                        'cf_processing_phase_2885394' => 'Investigation',
+                        'cf_change_due_reason_2885394' => 'Phase changed',
+                    ],
+                ],
+            ],
+            'field_changes' => [[
+                'field' => 'due_by',
+                'old_value' => '2026-08-02T10:47:22Z',
+                'new_value' => '2026-08-08T16:59:00Z',
+            ]],
+            'status' => TicketEvent::STATUS_PROCESSING,
+            'event_timestamp' => '2026-08-03T00:52:12Z',
+            'received_at' => now(),
+        ]);
+
+        $initialization = Mockery::mock(SlaInitializationService::class);
+        $initialization->shouldReceive('ensureSlaInitialized')->once();
+        $timeline = Mockery::mock(TimelineService::class);
+        $timeline->shouldReceive('appendTicketEventLog')->once();
+        $stageService = Mockery::mock(SlaStageService::class);
+        $stageService->shouldReceive('checkpointOpenStage')->once();
+        $timerService = Mockery::mock(TimerService::class)->shouldIgnoreMissing();
+
+        $handler = new DueDateChangedHandler(
+            $timerService,
+            $initialization,
+            $timeline,
+            $stageService
+        );
+
+        $handler->handle($ticket->ticket_id, $event->getTicketData(), $event->getFieldChanges(), $event);
+
+        $change = TicketDueDateChange::query()->where('ticket_id', $ticket->ticket_id)->firstOrFail();
+        $this->assertSame('Investigation', $change->processing_phase);
+        $this->assertSame('Phase changed', $change->reason_code);
     }
 
     private function event(Ticket $ticket, string $key, string $occurredAt): TicketEvent

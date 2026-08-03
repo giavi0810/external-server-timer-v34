@@ -112,7 +112,7 @@ class DueDateChangedHandler
         $this->recalculateSlaOnDueDateChange($ticket, $oldDue, $eventAt);
 
         $ticket->save();
-        $this->recordDueDateStage($ticket, $event, $oldDue, $newDue, $eventAt);
+        $this->recordDueDateStage($ticket, $event, $oldDue, $newDue, $eventAt, $customFields);
 
         $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         
@@ -132,7 +132,8 @@ class DueDateChangedHandler
         TicketEvent $event,
         ?Carbon $oldDue,
         Carbon $newDue,
-        Carbon $eventAt
+        Carbon $eventAt,
+        array $customFields
     ): void {
         $policy = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
         if (!$policy || !$oldDue) {
