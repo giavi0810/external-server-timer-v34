@@ -31,7 +31,9 @@ services:
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
-            SESSION_DRIVER: ${SESSION_DRIVER:-database}
+            SESSION_DRIVER: ${SESSION_DRIVER:-file}
+            ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+            ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
             DB_CONNECTION: ${DB_CONNECTION:-pgsql}
             DB_HOST: ${DB_HOST:-postgres}
             DB_PORT: ${DB_PORT:-5432}
@@ -118,7 +120,9 @@ services:
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
-            SESSION_DRIVER: ${SESSION_DRIVER:-database}
+            SESSION_DRIVER: ${SESSION_DRIVER:-file}
+            ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+            ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
             DB_CONNECTION: ${DB_CONNECTION:-pgsql}
             DB_HOST: ${DB_HOST:-postgres}
             DB_PORT: ${DB_PORT:-5432}

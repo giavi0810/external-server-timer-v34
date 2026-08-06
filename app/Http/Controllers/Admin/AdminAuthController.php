@@ -23,10 +23,13 @@ class AdminAuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $expectedUser = config('services.admin.username', env('ADMIN_USERNAME', 'admin'));
-        $expectedPass = config('services.admin.password', env('ADMIN_PASSWORD'));
+        $expectedUser = trim((string) config('services.admin.username', 'admin'));
+        $expectedPass = (string) config('services.admin.password');
 
-        if ($request->input('username') === $expectedUser && $request->input('password') === $expectedPass) {
+        $inputUser = trim((string) $request->input('username'));
+        $inputPass = (string) $request->input('password');
+
+        if (! empty($expectedPass) && $inputUser === $expectedUser && $inputPass === $expectedPass) {
             session([
                 'admin_logged_in' => true,
                 'admin_user' => $expectedUser,
