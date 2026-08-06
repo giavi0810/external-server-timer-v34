@@ -57,4 +57,10 @@ return [
         'redis_reminder_seconds' => (int) env('ROCKETCHAT_REDIS_REMINDER_SECONDS', 1800),
     ],
 
+    'admin' => [
+        'username' => env('ADMIN_USERNAME', 'admin'),
+        'password' => env('ADMIN_PASSWORD'),
+    ],
+
 ];
+
