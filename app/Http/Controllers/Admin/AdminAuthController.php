@@ -29,7 +29,7 @@ class AdminAuthController extends Controller
         $inputUser = trim((string) $request->input('username'));
         $inputPass = (string) $request->input('password');
 
-        if ($inputUser === $expectedUser && $inputPass === $expectedPass) {
+        if (! empty($expectedPass) && $inputUser === $expectedUser && $inputPass === $expectedPass) {
             session([
                 'admin_logged_in' => true,
                 'admin_user' => $expectedUser,
