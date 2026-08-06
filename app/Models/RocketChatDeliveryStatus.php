@@ -44,6 +44,15 @@ class RocketChatDeliveryStatus extends Model
         'completed_at' => 'datetime',
     ];
 
+    public function getFormattedAttemptedAtAttribute(): string
+    {
+        if (! $this->attempted_at) {
+            return '--';
+        }
+
+        return $this->attempted_at->setTimezone('Asia/Ho_Chi_Minh')->format('Y-m-d H:i:s');
+    }
+
     public static function statuses(): array
     {
         return [

@@ -1,25 +1,34 @@
 {
     "version": 1,
     "global": {
-        "last_sent_at": 1785488403
+        "last_sent_at": 1785989897
     },
     "notifications": {
         "system:78de1e5f1c1f2c54e8c7b8eff334194579548bfd": {
             "last_sent_at": 1785486344
         },
         "system:3264db4bef3c6cfb786c42dc41d9a3280d9f17e6": [],
-        "system:cb25e5e43f9206859d85b222df32a09a0ce708f7": [],
-        "system:40670d6fe1373b95394bea99c5ddcb629851e90d": []
+        "system:cb25e5e43f9206859d85b222df32a09a0ce708f7": {
+            "last_sent_at": 1785983011
+        },
+        "system:40670d6fe1373b95394bea99c5ddcb629851e90d": [],
+        "system:e3a51135ccef0f321be6b611619ad41df3c56046": {
+            "last_sent_at": 1785751153
+        },
+        "system:eb3b3241ee9e7064d2c5f1294adfd3792c0ef333": {
+            "last_sent_at": 1785989897
+        }
     },
     "redis_incidents": {
         "8ae7e9cc6883ab0f6c371a19385c944bef660b0f": {
             "status": "up",
-            "first_detected_at": 1785560483,
-            "last_detected_at": 1785560483,
-            "occurrence_count": 1,
-            "last_down_alert_at": null,
-            "down_alert_sent_at": null,
-            "recovered_at": 1785560490
+            "first_detected_at": 1785982318,
+            "last_detected_at": 1785982325,
+            "occurrence_count": 4,
+            "last_down_alert_at": 1785982320,
+            "down_alert_sent_at": 1785982320,
+            "recovered_at": 1785982382,
+            "recovery_alert_sent_at": 1785982382
         }
     }
 }

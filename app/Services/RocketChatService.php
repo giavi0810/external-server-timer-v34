@@ -343,28 +343,32 @@ class RocketChatService
         $redisError = $this->isRedisConnectionError($exception, $message);
         $databaseError = ! $redisError && $this->isDatabaseConnectionError($exception, $message);
 
+        $isRecoverProcessingError = str_contains($message, 'recover-processing') || str_contains($message, 'ticket-events:recover-processing');
+
         $category = match (true) {
             $redisError => 'redis_connection',
             $databaseError => 'database_connection',
+            $isRecoverProcessingError => 'recover_processing_error',
             default => 'system_error',
         };
         $severity = ($redisError || $databaseError) ? 'NGHIÊM TRỌNG' : 'CẢNH BÁO';
         $headline = match (true) {
-            $redisError => 'Mất kết nối Redis',
-            $databaseError => 'Mất kết nối cơ sở dữ liệu',
-            default => 'Lỗi hệ thống cần kiểm tra',
+            $redisError => 'Mất kết nối Redis Queue',
+            $databaseError => 'Mất kết nối CSDL PostgreSQL',
+            $isRecoverProcessingError => 'Lỗi tiến trình tự động khôi phục (Recover Processing)',
+            default => 'Phát hiện lỗi ứng dụng',
         };
         $impact = match (true) {
-            $redisError => 'Webhook vẫn được giữ trong file spool, nhưng việc đưa job vào Redis, '
-                .'ghi PostgreSQL và xử lý SLA đang bị trì hoãn.',
-            $databaseError => 'Webhook hoặc tác vụ hiện tại xử lý thất bại; dữ liệu SLA có thể chưa được cập nhật.',
-            default => 'Tác vụ hiện tại có thể chưa hoàn tất.',
+            $redisError => 'Tác vụ tạm ngừng. Webhook Freshdesk vẫn lưu an toàn trên đĩa đệm chờ khôi phục.',
+            $databaseError => 'Tác vụ tạm ngừng. Sự cố Freshdesk vẫn lưu an toàn trên đĩa đệm và tự chạy lại khi có CSDL.',
+            $isRecoverProcessingError => 'Tạm dừng dọn hàng chờ. Dữ liệu sự cố Freshdesk vẫn lưu an toàn trên đĩa đệm và tự chạy lại khi có CSDL.',
+            default => 'Tác vụ hiện tại gián đoạn. Dữ liệu sự cố trên đĩa đệm vẫn được bảo toàn.',
         };
         $recommendation = match (true) {
-            $redisError => 'Kiểm tra container timer-v34-redis, Docker network, REDIS_HOST và số file trong '
-                .'freshdesk-spool/ready.',
-            $databaseError => 'Kiểm tra PostgreSQL, Docker network và trạng thái container; xử lý rồi gửi lại webhook/job.',
-            default => 'Tra cứu log theo mã bên dưới để xác định nguyên nhân và xử lý.',
+            $redisError => 'Kiểm tra container timer-v34-redis trong Docker và mạng kết nối Redis.',
+            $databaseError => 'Kiểm tra container timer-v34-postgres trong Docker và bật lại CSDL.',
+            $isRecoverProcessingError => 'Kiểm tra kết nối CSDL PostgreSQL hoặc khởi động lại container timer-v34-postgres.',
+            default => 'Tra cứu chi tiết vị trí lỗi bên dưới để xử lý.',
         };
 
         $appName = config('app.name', 'External Server Timer V34');
