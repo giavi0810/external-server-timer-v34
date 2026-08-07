@@ -173,6 +173,7 @@ class LogMonitorController extends Controller
         $logPath = storage_path('logs');
         $files = [];
         $selectedFile = $request->input('file', 'laravel.log');
+        $hours = (int) $request->input('hours', 6);
 
         if (File::exists($logPath)) {
             foreach (File::files($logPath) as $file) {
@@ -190,11 +191,35 @@ class LogMonitorController extends Controller
         $fullPath = $logPath.DIRECTORY_SEPARATOR.$selectedFile;
 
         if (File::exists($fullPath)) {
-            $lines = array_slice(file($fullPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES), -300);
+            $rawLines = file($fullPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $cutoff = $hours > 0 ? Carbon::now()->subHours($hours) : null;
+            $filteredLines = [];
+            $keepCurrentBlock = true;
+
+            foreach ($rawLines as $line) {
+                if (preg_match('/^\[(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\]/', $line, $matches)) {
+                    if ($cutoff === null) {
+                        $keepCurrentBlock = true;
+                    } else {
+                        try {
+                            $lineTime = Carbon::parse($matches[1]);
+                            $keepCurrentBlock = $lineTime->gte($cutoff);
+                        } catch (Throwable $e) {
+                            $keepCurrentBlock = true;
+                        }
+                    }
+                }
+
+                if ($keepCurrentBlock) {
+                    $filteredLines[] = $line;
+                }
+            }
+
+            $lines = array_slice($filteredLines, -1000);
             $logContent = array_reverse($lines);
         }
 
-        return view('admin.system_logs', compact('files', 'selectedFile', 'logContent'));
+        return view('admin.system_logs', compact('files', 'selectedFile', 'logContent', 'hours'));
     }
 
     public function downloadSystemLog(Request $request)
