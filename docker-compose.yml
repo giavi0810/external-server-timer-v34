@@ -26,8 +26,8 @@ services:
             APP_KEY: ${APP_KEY}
             APP_DEBUG: ${APP_DEBUG:-false}
             APP_URL: ${APP_URL:-http://localhost}
-            LOG_CHANNEL: ${LOG_CHANNEL:-stderr}
-            LOG_STACK: ${LOG_STACK:-stderr}
+            LOG_CHANNEL: ${LOG_CHANNEL:-single}
+            LOG_STACK: ${LOG_STACK:-single}
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
@@ -115,8 +115,8 @@ services:
             APP_KEY: ${APP_KEY}
             APP_DEBUG: ${APP_DEBUG:-false}
             APP_URL: ${APP_URL:-http://localhost}
-            LOG_CHANNEL: ${LOG_CHANNEL:-stderr}
-            LOG_STACK: ${LOG_STACK:-stderr}
+            LOG_CHANNEL: ${LOG_CHANNEL:-single}
+            LOG_STACK: ${LOG_STACK:-single}
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
