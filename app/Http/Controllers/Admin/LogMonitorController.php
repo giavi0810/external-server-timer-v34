@@ -172,8 +172,6 @@ class LogMonitorController extends Controller
     {
         $logPath = storage_path('logs');
         $files = [];
-        $selectedFile = $request->input('file', 'laravel.log');
-        $hours = (int) $request->input('hours', 6);
 
         if (File::exists($logPath)) {
             foreach (File::files($logPath) as $file) {
@@ -183,6 +181,12 @@ class LogMonitorController extends Controller
             }
         }
 
+        rsort($files);
+
+        $defaultFile = ! empty($files) ? $files[0] : 'laravel.log';
+        $selectedFile = $request->input('file', $defaultFile);
+        $hours = (int) $request->input('hours', 6);
+
         if (! in_array($selectedFile, $files, true) && ! empty($files)) {
             $selectedFile = $files[0];
         }
@@ -191,7 +195,36 @@ class LogMonitorController extends Controller
         $fullPath = $logPath.DIRECTORY_SEPARATOR.$selectedFile;
 
         if (File::exists($fullPath)) {
-            $rawLines = file($fullPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $fileSize = filesize($fullPath);
+            $rawLines = [];
+
+            if ($fileSize > 10 * 1024 * 1024) {
+                $bytesToRead = 5 * 1024 * 1024;
+                if ($hours >= 12 || $hours === 0) {
+                    $bytesToRead = 15 * 1024 * 1024;
+                }
+
+                $fp = fopen($fullPath, 'r');
+                if ($fp) {
+                    $offset = max(0, $fileSize - $bytesToRead);
+                    fseek($fp, $offset);
+
+                    if ($offset > 0) {
+                        fgets($fp);
+                    }
+
+                    while (($line = fgets($fp)) !== false) {
+                        $line = trim($line, "\r\n");
+                        if ($line !== '') {
+                            $rawLines[] = $line;
+                        }
+                    }
+                    fclose($fp);
+                }
+            } else {
+                $rawLines = file($fullPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            }
+
             $cutoff = $hours > 0 ? Carbon::now()->subHours($hours) : null;
             $filteredLines = [];
             $keepCurrentBlock = true;
