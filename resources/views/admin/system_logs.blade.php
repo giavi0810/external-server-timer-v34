@@ -61,7 +61,7 @@
                     <option value="6" {{ $hours == 6 ? 'selected' : '' }}>6 giờ gần nhất (Mặc định)</option>
                     <option value="12" {{ $hours == 12 ? 'selected' : '' }}>12 giờ gần nhất</option>
                     <option value="24" {{ $hours == 24 ? 'selected' : '' }}>24 giờ gần nhất</option>
-                    <option value="0" {{ $hours == 0 ? 'selected' : '' }}>Tất cả dòng (Tối đa 1.000 dòng)</option>
+                    <option value="0" {{ $hours == 0 ? 'selected' : '' }}>Tất cả tệp log (Không giới hạn)</option>
                 </select>
             </div>
         </form>
@@ -70,9 +70,9 @@
             <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-sky-50 text-sky-700 border border-sky-200">
                 <i class="fa-solid fa-clock text-sky-500 mr-1.5"></i>
                 @if($hours > 0)
-                    Hiển thị log {{ $hours }} tiếng gần nhất ({{ count($logContent) }} dòng)
+                    Hiển thị toàn bộ {{ number_format(count($logContent)) }} dòng log trong {{ $hours }} tiếng gần nhất
                 @else
-                    Hiển thị tất cả log ({{ count($logContent) }} dòng)
+                    Hiển thị toàn bộ {{ number_format(count($logContent)) }} dòng trong tệp log
                 @endif
             </span>
         </div>

@@ -215,8 +215,7 @@ class LogMonitorController extends Controller
                 }
             }
 
-            $lines = array_slice($filteredLines, -1000);
-            $logContent = array_reverse($lines);
+            $logContent = array_reverse($filteredLines);
         }
 
         return view('admin.system_logs', compact('files', 'selectedFile', 'logContent', 'hours'));
