@@ -23,9 +23,9 @@
                 <span id="auto-refresh-countdown" class="hidden text-[11px] font-mono text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">30s</span>
             </div>
 
-            <a href="{{ route('admin.dashboard') }}" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg border border-slate-200 transition-colors flex items-center space-x-1.5 shadow-xs whitespace-nowrap">
+            <a id="dashboard-refresh-button" href="{{ route('admin.dashboard') }}" onclick="return requestDashboardRefresh(event)" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg border border-slate-200 transition-colors flex items-center space-x-1.5 shadow-xs whitespace-nowrap">
                 <i class="fa-solid fa-rotate text-sky-600"></i>
-                <span>Làm mới dữ liệu</span>
+                <span id="dashboard-refresh-label">Làm mới dữ liệu</span>
             </a>
         </div>
     </div>
@@ -410,6 +410,56 @@
     let autoRefreshTimer = null;
     let autoRefreshCountdownInterval = null;
     let countdownSeconds = 0;
+    const dashboardRefreshCooldownKey = 'admin-dashboard-refresh-unlock-at';
+    const dashboardRefreshCooldownMs = 5000;
+    let dashboardRefreshCooldownTimer = null;
+
+    function requestDashboardRefresh(event) {
+        const unlockAt = Number(sessionStorage.getItem(dashboardRefreshCooldownKey) || 0);
+
+        if (Date.now() < unlockAt) {
+            event.preventDefault();
+            updateDashboardRefreshButton();
+            return false;
+        }
+
+        sessionStorage.setItem(
+            dashboardRefreshCooldownKey,
+            String(Date.now() + dashboardRefreshCooldownMs)
+        );
+
+        return true;
+    }
+
+    function updateDashboardRefreshButton() {
+        const button = document.getElementById('dashboard-refresh-button');
+        const label = document.getElementById('dashboard-refresh-label');
+
+        if (!button || !label) return;
+
+        const unlockAt = Number(sessionStorage.getItem(dashboardRefreshCooldownKey) || 0);
+        const remainingMs = Math.max(0, unlockAt - Date.now());
+
+        if (remainingMs > 0) {
+            button.setAttribute('aria-disabled', 'true');
+            button.classList.add('opacity-60');
+            label.textContent = `Làm mới sau ${Math.ceil(remainingMs / 1000)}s`;
+            dashboardRefreshCooldownTimer = window.setTimeout(updateDashboardRefreshButton, 100);
+            return;
+        }
+
+        sessionStorage.removeItem(dashboardRefreshCooldownKey);
+        button.removeAttribute('aria-disabled');
+        button.classList.remove('opacity-60');
+        label.textContent = 'Làm mới dữ liệu';
+
+        if (dashboardRefreshCooldownTimer) {
+            window.clearTimeout(dashboardRefreshCooldownTimer);
+            dashboardRefreshCooldownTimer = null;
+        }
+    }
+
+    updateDashboardRefreshButton();
 
     // Auto Refresh Logic
     function changeAutoRefresh(seconds) {
@@ -652,5 +702,3 @@
     }
 </script>
 @endsection
-
-

@@ -13,9 +13,9 @@
 
         <div class="flex items-center space-x-2.5">
             <!-- Refresh Button -->
-            <a href="{{ route('admin.system_logs', ['file' => $selectedFile, 'hours' => $hours]) }}" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 transition-colors flex items-center space-x-1.5 shadow-xs">
+            <a id="log-refresh-button" href="{{ route('admin.system_logs', ['file' => $selectedFile, 'hours' => $hours]) }}" onclick="return requestLogRefresh(event)" class="bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200 transition-colors flex items-center space-x-1.5 shadow-xs">
                 <i class="fa-solid fa-rotate text-sky-600"></i>
-                <span>Làm mới log</span>
+                <span id="log-refresh-label">Làm mới log</span>
             </a>
 
             <!-- Auto Refresh Control -->
@@ -109,6 +109,52 @@
 <script>
     let logAutoRefreshInterval = null;
     let logCountdownSeconds = 0;
+    const logRefreshCooldownKey = 'admin-system-log-refresh-unlock-at';
+    const logRefreshCooldownMs = 5000;
+    let logRefreshCooldownTimer = null;
+
+    function requestLogRefresh(event) {
+        const unlockAt = Number(sessionStorage.getItem(logRefreshCooldownKey) || 0);
+
+        if (Date.now() < unlockAt) {
+            event.preventDefault();
+            updateLogRefreshButton();
+            return false;
+        }
+
+        sessionStorage.setItem(logRefreshCooldownKey, String(Date.now() + logRefreshCooldownMs));
+        return true;
+    }
+
+    function updateLogRefreshButton() {
+        const button = document.getElementById('log-refresh-button');
+        const label = document.getElementById('log-refresh-label');
+
+        if (!button || !label) return;
+
+        const unlockAt = Number(sessionStorage.getItem(logRefreshCooldownKey) || 0);
+        const remainingMs = Math.max(0, unlockAt - Date.now());
+
+        if (remainingMs > 0) {
+            button.setAttribute('aria-disabled', 'true');
+            button.classList.add('opacity-60');
+            label.textContent = `Làm mới sau ${Math.ceil(remainingMs / 1000)}s`;
+            logRefreshCooldownTimer = window.setTimeout(updateLogRefreshButton, 100);
+            return;
+        }
+
+        sessionStorage.removeItem(logRefreshCooldownKey);
+        button.removeAttribute('aria-disabled');
+        button.classList.remove('opacity-60');
+        label.textContent = 'Làm mới log';
+
+        if (logRefreshCooldownTimer) {
+            window.clearTimeout(logRefreshCooldownTimer);
+            logRefreshCooldownTimer = null;
+        }
+    }
+
+    updateLogRefreshButton();
 
     function changeAutoRefreshLogs(seconds) {
         seconds = parseInt(seconds);

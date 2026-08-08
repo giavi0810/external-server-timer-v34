@@ -79,6 +79,19 @@
                         <i class="fa-solid fa-terminal text-sky-600"></i>
                         <span>Nhật ký lỗi hệ thống</span>
                     </a>
+                    <a href="{{ route('admin.sla-policies.index') }}"
+                       class="flex items-center space-x-2 px-4 py-2.5 rounded-t-lg text-xs md:text-sm font-semibold transition-all border-b-2 whitespace-nowrap {{ request()->routeIs('admin.sla-policies.*') ? 'border-sky-600 text-sky-600 bg-sky-50/50' : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50' }}">
+                        <i class="fa-solid fa-stopwatch text-sky-600"></i>
+                        <span>Quản lý SLA</span>
+                    </a>
+
+                    @if(session('admin_role') === 'super_admin')
+                        <a href="{{ route('admin.users.index') }}"
+                           class="flex items-center space-x-2 px-4 py-2.5 rounded-t-lg text-xs md:text-sm font-semibold transition-all border-b-2 whitespace-nowrap {{ request()->routeIs('admin.users.*') ? 'border-sky-600 text-sky-600 bg-sky-50/50' : 'border-transparent text-slate-600 hover:text-slate-900 hover:bg-slate-50' }}">
+                            <i class="fa-solid fa-users-gear text-sky-600"></i>
+                            <span>Tài khoản</span>
+                        </a>
+                    @endif
                 </nav>
             </div>
         </header>
@@ -106,6 +119,17 @@
                     <button onclick="dismissAlert('flash-alert-error')" class="text-rose-500 hover:text-rose-800 ml-2">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
+                </div>
+            @endif
+
+            @if($errors->any())
+                <div class="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800">
+                    <div class="font-bold mb-2"><i class="fa-solid fa-circle-exclamation mr-1"></i> Dữ liệu chưa hợp lệ</div>
+                    <ul class="list-disc pl-5 space-y-1">
+                        @foreach($errors->all() as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                    </ul>
                 </div>
             @endif
 
