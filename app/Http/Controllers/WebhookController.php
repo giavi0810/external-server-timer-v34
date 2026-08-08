@@ -287,14 +287,6 @@ class WebhookController extends Controller
             $normalizedChanges = $this->canonicalizeGroupChanges($normalizedChanges, $groupId, $oldValues);
 
             foreach ($normalizedChanges as &$change) {
-                if ($change['field'] === 'status') {
-                    if (is_numeric($change['old_value'] ?? null)) {
-                        $change['old_value'] = config("freshdesk.status_map.{$change['old_value']}", $change['old_value']);
-                    }
-                    if (is_numeric($change['new_value'] ?? null)) {
-                        $change['new_value'] = config("freshdesk.status_map.{$change['new_value']}", $change['new_value']);
-                    }
-                }
                 if ($change['field'] === 'priority') {
                     if (is_numeric($change['old_value'] ?? null)) {
                         $change['old_value'] = config("freshdesk.priority_map.{$change['old_value']}", $change['old_value']);
