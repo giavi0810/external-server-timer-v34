@@ -14,6 +14,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             FreshdeskGroupSeeder::class,
             SlaPolicySeeder::class,
+            AdminUserSeeder::class,
         ]);
     }
 }
