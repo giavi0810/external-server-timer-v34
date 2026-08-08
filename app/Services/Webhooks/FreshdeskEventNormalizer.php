@@ -4,6 +4,7 @@ namespace App\Services\Webhooks;
 
 use App\Exceptions\InvalidWebhookPayloadException;
 use App\Models\TicketEvent;
+use App\Services\FreshdeskStatusNormalizer;
 use Carbon\Carbon;
 
 class FreshdeskEventNormalizer
@@ -15,6 +16,11 @@ class FreshdeskEventNormalizer
         'cf_processing_phase',
         'cf_change_due_reason',
     ];
+
+    public function __construct(
+        private readonly FreshdeskStatusNormalizer $statusNormalizer
+    ) {
+    }
 
     public function normalize(array $event): array
     {
@@ -215,7 +221,7 @@ class FreshdeskEventNormalizer
     {
         $value = $this->extractChangeValue($value);
 
-        return is_numeric($value) ? config("freshdesk.status_map.{$value}", $value) : $value;
+        return $this->statusNormalizer->canonicalize($value);
     }
 
     private function normalizePriority(mixed $value): mixed

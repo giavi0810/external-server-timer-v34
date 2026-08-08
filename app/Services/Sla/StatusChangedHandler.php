@@ -58,8 +58,12 @@ class StatusChangedHandler
             return;
         }
 
-        $oldStatus = $statusChange['old_value'] ?? $ticket->status;
-        $newStatus = $statusChange['new_value'] ?? $ticketData['status'];
+        $oldStatus = $this->timerService->canonicalizeStatus(
+            $statusChange['old_value'] ?? $ticket->status
+        ) ?? $ticket->status;
+        $newStatus = $this->timerService->canonicalizeStatus(
+            $statusChange['new_value'] ?? $ticketData['status'] ?? $ticket->status
+        ) ?? $ticket->status;
 
         Log::info("StatusChangedHandler: {$oldStatus} → {$newStatus}", ['ticket_id' => $ticketId]);
 

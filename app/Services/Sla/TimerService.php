@@ -10,6 +10,7 @@ use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketStatusMetric;
 use App\Models\TicketEvent;
 use App\Models\TicketGroupSession;
+use App\Services\FreshdeskStatusNormalizer;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
@@ -19,6 +20,11 @@ use Carbon\Carbon;
 class TimerService
 {
     protected const TRACKED_GROUP_LAYERS = ['L1', 'L2', 'L3', 'L4'];
+
+    public function __construct(
+        private readonly FreshdeskStatusNormalizer $statusNormalizer
+    ) {
+    }
 
     public function startGroupTimer(Ticket $ticket, string $layer, ?Carbon $at = null): void
     {
@@ -244,8 +250,10 @@ class TimerService
         $ttrMetric->save();
     }
 
-    public function accumulateWaitingTime(TicketStatusMetric $statusMetric, string $fromStatus, Carbon $now): void
+    public function accumulateWaitingTime(TicketStatusMetric $statusMetric, mixed $fromStatus, Carbon $now): void
     {
+        $fromStatus = $this->canonicalizeStatus($fromStatus);
+
         if ($fromStatus === 'Waiting For Customer' && $statusMetric->waiting_started_at) {
             $startedAt = Carbon::parse($statusMetric->waiting_started_at);
             $duration = $now->timestamp - $startedAt->timestamp;
@@ -259,8 +267,10 @@ class TimerService
         }
     }
 
-    public function getLastWaitingDuration(TicketStatusMetric $statusMetric, string $fromStatus, Carbon $now): int
+    public function getLastWaitingDuration(TicketStatusMetric $statusMetric, mixed $fromStatus, Carbon $now): int
     {
+        $fromStatus = $this->canonicalizeStatus($fromStatus);
+
         if ($fromStatus === 'Waiting For Customer' && $statusMetric->waiting_started_at) {
             return $now->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp;
         } elseif ($fromStatus === 'Pending' && $statusMetric->pending_started_at) {
@@ -280,23 +290,30 @@ class TimerService
         }
     }
 
-    public function isRunStatus(string $status): bool
+    public function canonicalizeStatus(mixed $status): ?string
     {
-        return in_array($status, config('freshdesk.run_statuses', []));
+        return $this->statusNormalizer->canonicalize($status);
     }
 
-    public function isPauseStatus(string $status): bool
+    public function isRunStatus(mixed $status): bool
     {
-        return in_array($status, config('freshdesk.pause_statuses', []));
+        return in_array($this->canonicalizeStatus($status), config('freshdesk.run_statuses', []), true);
     }
 
-    public function isEndStatus(string $status): bool
+    public function isPauseStatus(mixed $status): bool
     {
-        return in_array($status, config('freshdesk.end_statuses', []));
+        return in_array($this->canonicalizeStatus($status), config('freshdesk.pause_statuses', []), true);
     }
 
-    public function getShortStatus(string $statusName): string
+    public function isEndStatus(mixed $status): bool
     {
+        return in_array($this->canonicalizeStatus($status), config('freshdesk.end_statuses', []), true);
+    }
+
+    public function getShortStatus(mixed $statusName): string
+    {
+        $statusName = $this->canonicalizeStatus($statusName) ?? '';
+
         $map = [
             'Open' => 'O',
             'Pending' => 'P',
