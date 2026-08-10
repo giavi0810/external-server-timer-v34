@@ -304,8 +304,11 @@ services:
         logging: *default-logging
         security_opt:
             - no-new-privileges:true
+        env_file:
+            - path: .env
+              required: false
         command:
-            ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+            ["sh", "-c", "if [ -n \"$$REDIS_PASSWORD\" ]; then exec redis-server --appendonly yes --appendfsync everysec --requirepass \"$$REDIS_PASSWORD\"; else exec redis-server --appendonly yes --appendfsync everysec; fi"]
         ports:
             - "127.0.0.1:${FORWARD_REDIS_PORT:-6384}:6379"
         volumes:
