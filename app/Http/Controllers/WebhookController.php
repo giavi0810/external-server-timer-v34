@@ -153,8 +153,8 @@ class WebhookController extends Controller
             $oldValues = $ticket ? $ticket->toArray() : [];
             $incomingUpdatedAt = Carbon::parse($ticketData['updated_at'] ?? $eventTimestamp)->utc();
             $shouldApplySnapshot = !$ticket
-                || !$ticket->freshdesk_updated_at
-                || $incomingUpdatedAt->gte($ticket->freshdesk_updated_at);
+                || !$ticket->fd_updated_at
+                || $incomingUpdatedAt->gte($ticket->fd_updated_at);
 
             if (empty($ticketData) && $ticket) {
                 Log::info("ticket_data is empty, using existing ticket from DB", [
@@ -225,7 +225,7 @@ class WebhookController extends Controller
                     'group_id' => $groupId,
                     'requester_id' => $ticketData['requester_id'] ?? $validated['conversation_data']['actor_id'] ?? null,
                     'fd_created_at' => $ticketData['created_at'] ?? null,
-                    'freshdesk_updated_at' => $incomingUpdatedAt,
+                    'fd_updated_at' => $incomingUpdatedAt,
                 ];
 
                 $ticketUpdateData = array_filter($incomingData, static fn ($value) => $value !== null);

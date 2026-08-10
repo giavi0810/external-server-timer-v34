@@ -17,7 +17,7 @@ class Ticket extends Model
         'ticket_id', 'source_ticket_id', 'creation_reason', 'subject', 'status',
         'priority', 'ticket_type', 'group_id', 'requester_id', 'fd_created_at',
         'resolved_at', 'closed_at', 'reopened_at',
-        'freshdesk_updated_at',
+        'fd_updated_at',
     ];
 
     protected $casts = [
@@ -28,7 +28,7 @@ class Ticket extends Model
         'resolved_at' => 'datetime',
         'closed_at' => 'datetime',
         'reopened_at' => 'datetime',
-        'freshdesk_updated_at' => 'datetime',
+        'fd_updated_at' => 'datetime',
     ];
 
     public function sourceTicket(): BelongsTo
