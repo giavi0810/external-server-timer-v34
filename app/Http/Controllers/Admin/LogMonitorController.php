@@ -48,7 +48,7 @@ class LogMonitorController extends Controller
 
         $redisStatus = 'OK';
         try {
-            Redis::connection()->ping();
+            Redis::connection('health')->ping();
         } catch (Throwable $e) {
             $redisStatus = 'Error: '.$e->getMessage();
         }
@@ -405,4 +405,3 @@ class LogMonitorController extends Controller
         ]);
     }
 }
-
