@@ -132,15 +132,9 @@ class AppTimerSyncService
             }
         }
 
-        // 2. Extra Time Info
-        $lastExtraStage = $ticket->slaStages()
-            ->whereHas('metrics', fn ($query) => $query->where('extra_time_granted_seconds', '>', 0))
-            ->with('metrics')
-            ->latest('opened_at')
-            ->first();
-        $ttrExtra = $lastExtraStage?->metrics->firstWhere('metric_type', 'ttr');
-        $rtExtra = $lastExtraStage?->metrics->firstWhere('metric_type', 'rt');
-
+        // Release 1 keeps Priority/Extra Time calculations in the database only.
+        // These keys stay compatible with the current app payload but must not
+        // expose calculated Release 2 values to Freshdesk yet.
         $extraInfo = [
             'sg' => null,
             'et' => null,
@@ -152,30 +146,6 @@ class AppTimerSyncService
             'rpu' => null,
             'rfr' => null,
         ];
-
-        if ($lastExtraStage) {
-            $createdAt = Carbon::parse($ticket->fd_created_at);
-            $changedAt = Carbon::parse($lastExtraStage->opened_at);
-            $priorityUpdateMs = max(0, ($changedAt->getTimestamp() - $createdAt->getTimestamp()) * 1000);
-
-            if ($ttrExtra && $ttrExtra->extra_time_granted_seconds > 0) {
-                $extraInfo['sg'] = $ttrExtra->sla_goal_seconds * 1000;
-                $extraInfo['et'] = $ttrExtra->extra_time_granted_seconds * 1000;
-                $extraInfo['pu'] = (int) $priorityUpdateMs;
-                $extraInfo['pc'] = $changedAt->toIso8601ZuluString();
-                $extraInfo['dn'] = $ttrExtra->adjusted_due_at?->toIso8601ZuluString();
-            }
-
-            if ($rtExtra && $rtExtra->extra_time_granted_seconds > 0) {
-                $extraInfo['rsg'] = $rtExtra->sla_goal_seconds * 1000;
-                $extraInfo['ret'] = $rtExtra->extra_time_granted_seconds * 1000;
-                $extraInfo['rpu'] = $rtExtra->used_before_seconds * 1000;
-                if (!isset($extraInfo['pc'])) {
-                    $extraInfo['pc'] = $changedAt->toIso8601ZuluString();
-                }
-                $extraInfo['rfr'] = $rtExtra->adjusted_due_at?->toIso8601ZuluString();
-            }
-        }
 
         $currentResoSeconds = max(0, (int) ($statusMetric->resolution_total_seconds ?? 0));
 

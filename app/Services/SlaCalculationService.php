@@ -44,9 +44,7 @@ class SlaCalculationService
         $this->syncRunningTimersToTicketEventTime($ticketId, $event);
         $this->detectReplyActivity($ticketId, $ticketData, $event);
 
-        if (class_exists(PriorityChangedHandler::class)) {
-            app(PriorityChangedHandler::class)->handle($ticketId, $ticketData, $changes, $event);
-        }
+        app(PriorityChangedHandler::class)->handle($ticketId, $ticketData, $changes, $event);
 
         $this->processSecondaryChanges($ticketId, $ticketData, $changes, $event, 'priority');
     }
@@ -76,9 +74,7 @@ class SlaCalculationService
 
             if ($field === 'priority' && $primaryField !== 'priority') {
                 Log::info("SlaCalculationService: Phát hiện Priority thay đổi phụ", ['ticket_id' => $ticketId]);
-                if (class_exists(PriorityChangedHandler::class)) {
-                    app(PriorityChangedHandler::class)->handle($ticketId, $ticketData, [$change], $event);
-                }
+                app(PriorityChangedHandler::class)->handle($ticketId, $ticketData, [$change], $event);
             }
 
             if (in_array($field, ['group_id', 'group_name'], true) && $primaryField !== 'group') {
