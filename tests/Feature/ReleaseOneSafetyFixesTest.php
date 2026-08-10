@@ -12,6 +12,7 @@ use App\Models\TicketHistory;
 use App\Services\FreshdeskApiService;
 use App\Services\Sla\AppTimerSyncService;
 use App\Services\Sla\DueDateChangedHandler;
+use App\Services\Sla\RequesterRepliedHandler;
 use App\Services\Sla\SlaInitializationService;
 use App\Services\Sla\SlaStageService;
 use App\Services\Sla\TimelineService;
@@ -96,6 +97,48 @@ class ReleaseOneSafetyFixesTest extends TestCase
             [$first->id, $second->id],
             TicketHistory::query()->pluck('ticket_event_id')->all()
         );
+    }
+
+    public function test_requester_reply_on_closed_ticket_does_not_trigger_release_two_reopen_flow(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 18325,
+            'status' => 'Closed',
+            'priority' => 'High',
+            'fd_created_at' => '2026-07-29T08:00:00Z',
+            'closed_at' => '2026-07-30T08:00:00Z',
+        ]);
+        $event = TicketEvent::create([
+            'ticket_id' => $ticket->ticket_id,
+            'idempotency_key' => hash('sha256', 'closed-requester-reply-release-one'),
+            'event_type' => TicketEvent::EVENT_REQUESTER_REPLIED,
+            'event_data' => [
+                'ticket_data' => ['updated_at' => '2026-07-30T09:00:00Z'],
+                'conversation_data' => [
+                    'actor_id' => 100,
+                    'updated_at' => '2026-07-30T09:00:00Z',
+                ],
+            ],
+            'field_changes' => [],
+            'status' => TicketEvent::STATUS_PROCESSING,
+            'event_timestamp' => '2026-07-30T09:00:00Z',
+            'received_at' => '2026-07-30T09:00:00Z',
+        ]);
+
+        app(RequesterRepliedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event
+        );
+
+        $this->assertDatabaseCount('freshdesk_outbound_operations', 0);
+        $this->assertNull($ticket->fresh()->reopened_at);
+        $this->assertDatabaseHas('ticket_histories', [
+            'ticket_id' => $ticket->ticket_id,
+            'ticket_event_id' => $event->id,
+            'event_key' => 'ct',
+            'event_value' => 'rep',
+        ]);
     }
 
     public function test_change_due_date_outbound_operation_updates_freshdesk_once(): void
