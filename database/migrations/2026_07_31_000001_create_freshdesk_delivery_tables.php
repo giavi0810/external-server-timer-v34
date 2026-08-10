@@ -24,7 +24,7 @@ return new class extends Migration
         });
 
         Schema::table('tickets', function (Blueprint $table) {
-            $table->timestampTz('freshdesk_updated_at')->nullable()->index();
+            $table->timestampTz('fd_updated_at')->nullable()->index();
         });
 
         Schema::create('ticket_logic_outboxes', function (Blueprint $table) {
@@ -100,7 +100,7 @@ return new class extends Migration
                 SQL);
             DB::statement(<<<'SQL'
                 UPDATE tickets
-                SET freshdesk_updated_at = source.latest_event_at
+                SET fd_updated_at = source.latest_event_at
                 FROM (
                     SELECT ticket_id, max(event_timestamp) AS latest_event_at
                     FROM ticket_events
@@ -135,7 +135,7 @@ return new class extends Migration
                     ]);
                 }
                 DB::table('tickets')->where('ticket_id', $ticketId)->update([
-                    'freshdesk_updated_at' => DB::table('ticket_events')
+                    'fd_updated_at' => DB::table('ticket_events')
                         ->where('ticket_id', $ticketId)->max('event_timestamp'),
                 ]);
             }
@@ -150,7 +150,7 @@ return new class extends Migration
             $table->dropColumn(['logic_generation', 'source_order_key', 'processing_token']);
         });
         Schema::table('tickets', function (Blueprint $table) {
-            $table->dropColumn('freshdesk_updated_at');
+            $table->dropColumn('fd_updated_at');
         });
         Schema::dropIfExists('freshdesk_webhook_receipts');
     }
