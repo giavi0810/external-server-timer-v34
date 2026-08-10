@@ -307,6 +307,8 @@ services:
         env_file:
             - path: .env
               required: false
+        environment:
+            REDIS_PASSWORD: ${REDIS_PASSWORD:-}
         command:
             ["sh", "-c", "if [ -n \"$$REDIS_PASSWORD\" ]; then exec redis-server --appendonly yes --appendfsync everysec --requirepass \"$$REDIS_PASSWORD\"; else exec redis-server --appendonly yes --appendfsync everysec; fi"]
         ports:
