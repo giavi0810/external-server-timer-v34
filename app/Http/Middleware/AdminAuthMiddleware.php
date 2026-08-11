@@ -3,25 +3,41 @@
 namespace App\Http\Middleware;
 
 use App\Models\AdminUser;
+use App\Services\Admin\DashboardDatabaseConnection;
 use Closure;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use PDOException;
 use Symfony\Component\HttpFoundation\Response;
+use Throwable;
 
 class AdminAuthMiddleware
 {
+    public function __construct(
+        private readonly DashboardDatabaseConnection $dashboardDatabase,
+    ) {}
+
     public function handle(Request $request, Closure $next): Response
     {
         $admin = null;
 
         if ($request->session()->get('admin_logged_in', false)) {
             try {
+                if ($request->isMethod('GET') && $request->routeIs('admin.dashboard')) {
+                    $this->dashboardDatabase->prepare();
+                }
+
                 $admin = AdminUser::query()->find($request->session()->get('admin_user_id'));
-            } catch (QueryException) {
-                if ($this->canAccessDegradedDashboard($request)) {
+            } catch (Throwable $e) {
+                if ($this->isDatabaseConnectionError($e) && $this->canAccessDegradedDashboard($request)) {
                     $request->attributes->set('admin_auth_degraded', true);
+                    $request->attributes->set('admin_database_error', $e->getMessage());
 
                     return $next($request);
+                }
+
+                if (! $this->isDatabaseConnectionError($e)) {
+                    throw $e;
                 }
 
                 abort(503, 'Không thể xác minh tài khoản quản trị vì cơ sở dữ liệu đang mất kết nối.');
@@ -64,5 +80,10 @@ class AdminAuthMiddleware
             && $adminId !== false
             && $username !== ''
             && in_array($role, AdminUser::ROLES, true);
+    }
+
+    private function isDatabaseConnectionError(Throwable $e): bool
+    {
+        return $e instanceof QueryException || $e instanceof PDOException;
     }
 }
