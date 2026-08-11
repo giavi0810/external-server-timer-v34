@@ -21,6 +21,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Dashboard Database Check
+    |--------------------------------------------------------------------------
+    |
+    | This timeout is applied only while opening PostgreSQL for the monitoring
+    | dashboard. Queue workers, schedulers and all other requests keep using
+    | the normal connection configuration.
+    |
+    */
+
+    'dashboard' => [
+        'connect_timeout' => max(1, (int) env('ADMIN_DASHBOARD_DB_CONNECT_TIMEOUT', 3)),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Connections
     |--------------------------------------------------------------------------
     |

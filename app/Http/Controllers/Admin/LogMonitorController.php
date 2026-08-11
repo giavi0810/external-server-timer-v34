@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Redis;
 
 class LogMonitorController extends Controller
 {
-    public function dashboard()
+    public function dashboard(Request $request)
     {
         // 1. RocketChat Spool Stats
         $auditRoot = config('rocketchat_audit.root', storage_path('app/rocketchat-audit'));
@@ -39,11 +39,16 @@ class LogMonitorController extends Controller
         ];
 
         // 3. Database & Services Health Check (Fast check first)
-        $dbStatus = 'OK';
-        try {
-            DB::connection()->getPdo();
-        } catch (Throwable $e) {
-            $dbStatus = 'Error: '.$e->getMessage();
+        $dbStatus = $request->attributes->get('admin_auth_degraded', false)
+            ? 'Error: '.$request->attributes->get('admin_database_error', 'PostgreSQL is unavailable.')
+            : 'OK';
+
+        if ($dbStatus === 'OK') {
+            try {
+                DB::connection()->getPdo();
+            } catch (Throwable $e) {
+                $dbStatus = 'Error: '.$e->getMessage();
+            }
         }
 
         $redisStatus = 'OK';
