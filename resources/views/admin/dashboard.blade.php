@@ -263,7 +263,7 @@
                     <div class="flex items-center justify-between p-3 bg-slate-50/80 rounded-lg border border-slate-200">
                         <div class="flex items-center space-x-2.5 min-w-0">
                             <i class="fa-solid fa-file-code text-slate-400"></i>
-                            <span class="text-xs font-semibold text-slate-800 font-mono truncate">{{ $logFile['name'] }}</span>
+                            <span class="text-xs font-semibold text-slate-800 font-mono truncate">{{ $logFile['display_name'] }}</span>
                         </div>
                         <div class="text-right flex-shrink-0 ml-2">
                             <span class="text-xs font-bold text-sky-600 font-mono block">{{ $logFile['size'] }}</span>

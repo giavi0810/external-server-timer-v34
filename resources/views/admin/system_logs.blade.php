@@ -49,7 +49,7 @@
                 <label class="text-xs font-bold text-slate-700">Chọn Tệp Log:</label>
                 <select name="file" onchange="this.form.submit()" class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono font-semibold">
                     @foreach($files as $file)
-                        <option value="{{ $file }}" {{ $selectedFile == $file ? 'selected' : '' }}>{{ $file }}</option>
+                        <option value="{{ $file }}" {{ $selectedFile == $file ? 'selected' : '' }}>{{ $fileLabels[$file] }}</option>
                     @endforeach
                 </select>
             </div>
