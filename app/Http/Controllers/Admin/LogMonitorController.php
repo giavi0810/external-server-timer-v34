@@ -90,6 +90,7 @@ class LogMonitorController extends Controller
                 if ($file->getExtension() === 'log') {
                     $logFiles[] = [
                         'name' => $file->getFilename(),
+                        'display_name' => $this->logDisplayName($file->getFilename()),
                         'size' => number_format($file->getSize() / 1024, 2).' KB',
                         'updated_at' => Carbon::createFromTimestamp($file->getMTime())->format('Y-m-d H:i:s'),
                     ];
@@ -188,6 +189,11 @@ class LogMonitorController extends Controller
 
         rsort($files);
 
+        $fileLabels = [];
+        foreach ($files as $file) {
+            $fileLabels[$file] = $this->logDisplayName($file);
+        }
+
         $defaultFile = ! empty($files) ? $files[0] : 'laravel.log';
         $selectedFile = $request->input('file', $defaultFile);
         $hours = (int) $request->input('hours', 6);
@@ -256,7 +262,15 @@ class LogMonitorController extends Controller
             $logContent = array_reverse($filteredLines);
         }
 
-        return view('admin.system_logs', compact('files', 'selectedFile', 'logContent', 'hours'));
+        return view('admin.system_logs', compact('files', 'fileLabels', 'selectedFile', 'logContent', 'hours'));
+    }
+
+    private function logDisplayName(string $fileName): string
+    {
+        $displayName = preg_replace('/\.log$/i', '', $fileName) ?? $fileName;
+        $displayName = preg_replace('/^laravel-?/i', '', $displayName) ?? $displayName;
+
+        return $displayName !== '' ? $displayName : 'Hiện tại';
     }
 
     public function downloadSystemLog(Request $request)
