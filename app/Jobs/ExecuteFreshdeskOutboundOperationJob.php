@@ -2,22 +2,25 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\FreshdeskOutboundConflictException;
+use App\Exceptions\UncertainFreshdeskOutcomeException;
 use App\Models\FreshdeskOutboundOperation;
 use App\Models\Ticket;
 use App\Models\TicketLogicOutbox;
-use App\Exceptions\UncertainFreshdeskOutcomeException;
-use App\Services\Sla\AppTimerSyncService;
 use App\Services\FreshdeskApiService;
+use App\Services\Sla\AppTimerSyncService;
+use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
 {
     use Queueable;
 
     public int $timeout = 105;
+
     public int $tries = 1;
 
     public function __construct(
@@ -26,8 +29,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         public readonly int $generation,
         public readonly int $syncEpoch,
         public readonly int $operationVersion
-    ) {
-    }
+    ) {}
 
     public function handle(AppTimerSyncService $syncService, FreshdeskApiService $freshdesk): void
     {
@@ -48,8 +50,9 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
 
         $operation = FreshdeskOutboundOperation::query()->findOrFail($this->operationId);
         $lock = Cache::lock("ticket_processing:{$operation->ticket_id}", 120);
-        if (!$lock->get()) {
+        if (! $lock->get()) {
             $this->deferClaim('Ticket processing lock is busy.', 15);
+
             return;
         }
 
@@ -63,6 +66,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
                 ->exists();
             if ($replayActive) {
                 $this->deferClaim('Outbound operation blocked by replay.', 30);
+
                 return;
             }
 
@@ -72,6 +76,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
                 'reopen_ticket' => $this->reopenTicket($freshdesk, $operation),
                 'create_followup_ticket' => $this->createFollowupTicket($freshdesk, $operation),
                 'change_due_date' => $this->changeDueDate($freshdesk, $operation),
+                'change_group' => $this->changeGroup($freshdesk, $operation),
                 default => throw new \RuntimeException(
                     "Unsupported outbound operation: {$operation->operation_type}"
                 ),
@@ -92,6 +97,25 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
                     'last_error' => null,
                     'remote_id' => $remoteId,
                 ]);
+        } catch (FreshdeskOutboundConflictException $exception) {
+            FreshdeskOutboundOperation::query()
+                ->whereKey($this->operationId)
+                ->where('state', 'processing')
+                ->where('lease_token', $this->leaseToken)
+                ->where('generation', $this->generation)
+                ->where('sync_epoch', $this->syncEpoch)
+                ->where('operation_version', $this->operationVersion)
+                ->update([
+                    'state' => 'failed',
+                    'completed_at' => now(),
+                    'lease_token' => null,
+                    'visibility_at' => null,
+                    'last_error' => $exception->getMessage(),
+                ]);
+            Log::warning('Freshdesk outbound operation stopped by a state conflict', [
+                'operation_id' => $this->operationId,
+                'reason' => $exception->getMessage(),
+            ]);
         } catch (UncertainFreshdeskOutcomeException $exception) {
             FreshdeskOutboundOperation::query()
                 ->whereKey($this->operationId)
@@ -138,6 +162,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
     private function syncSla(AppTimerSyncService $syncService, Ticket $ticket): string
     {
         $syncService->syncTicket($ticket);
+
         return (string) $ticket->ticket_id;
     }
 
@@ -147,7 +172,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
     ): string {
         $marker = $this->marker();
         $remote = $freshdesk->getTicket($operation->ticket_id);
-        if (!is_array($remote)) {
+        if (! is_array($remote)) {
             throw new \RuntimeException('Unable to reconcile Freshdesk ticket before reopen.');
         }
 
@@ -168,10 +193,10 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         $filtered[] = 'Reopened ('.($maxReopen + 1).')';
         $filtered[] = $marker;
         $payload = ['status' => 3, 'tags' => array_values(array_unique($filtered))];
-        if (!empty($operation->payload['group_id'])) {
+        if (! empty($operation->payload['group_id'])) {
             $payload['group_id'] = $operation->payload['group_id'];
         }
-        if (!$freshdesk->updateTicket($operation->ticket_id, $payload)) {
+        if (! $freshdesk->updateTicket($operation->ticket_id, $payload)) {
             throw new \RuntimeException('Freshdesk reopen PUT failed.');
         }
 
@@ -186,7 +211,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         $existing = $freshdesk->findTicketByOperationMarker($marker);
         $remoteId = $existing['id'] ?? null;
 
-        if (!$remoteId) {
+        if (! $remoteId) {
             if ($operation->reconcile_only) {
                 throw new UncertainFreshdeskOutcomeException(
                     'Freshdesk marker is not visible yet; POST will not be repeated blindly.'
@@ -196,7 +221,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             $payload['tags'] = array_values(array_unique(array_merge($payload['tags'] ?? [], [$marker])));
             $created = $freshdesk->createTicket($payload);
             $remoteId = $created['id'] ?? null;
-            if (!$remoteId) {
+            if (! $remoteId) {
                 $context = $freshdesk->getLastErrorContext() ?? [];
                 if (($context['outcome_unknown'] ?? false) === true) {
                     throw new UncertainFreshdeskOutcomeException(
@@ -208,8 +233,8 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         }
 
         if (($operation->payload['set_due_driven'] ?? false)
-            && !empty($operation->payload['processing_mode_key'])
-            && !$freshdesk->updateTicket((int) $operation->payload['source_ticket_id'], [
+            && ! empty($operation->payload['processing_mode_key'])
+            && ! $freshdesk->updateTicket((int) $operation->payload['source_ticket_id'], [
                 'custom_fields' => [$operation->payload['processing_mode_key'] => 'due-driven'],
             ])
         ) {
@@ -227,7 +252,7 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
     ): string {
         $marker = $this->marker();
         $remote = $freshdesk->getTicket($operation->ticket_id);
-        if (!is_array($remote)) {
+        if (! is_array($remote)) {
             throw new \RuntimeException('Unable to reconcile Freshdesk ticket before Due Date update.');
         }
 
@@ -269,23 +294,23 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             $countKey => $nextCount,
             $processingModeKey => 'due-driven',
         ];
-        if (!empty($operation->payload['processing_phase'])) {
+        if (! empty($operation->payload['processing_phase'])) {
             $updatedFields[$phaseKey] = $operation->payload['processing_phase'];
         }
-        if (!empty($operation->payload['reason'])) {
+        if (! empty($operation->payload['reason'])) {
             $updatedFields[$reasonKey] = $operation->payload['reason'];
         }
 
         $tagPattern = '/^due_date_change(?:\s*\((\d+)\))?$/i';
         $filteredTags = array_values(array_filter(
             $tags,
-            static fn (mixed $tag): bool => !preg_match($tagPattern, trim((string) $tag))
+            static fn (mixed $tag): bool => ! preg_match($tagPattern, trim((string) $tag))
         ));
         $dueDateTag = "due_date_change ({$nextCount})";
         $filteredTags[] = $dueDateTag;
         $filteredTags[] = $marker;
 
-        if (!$freshdesk->updateTicket($operation->ticket_id, [
+        if (! $freshdesk->updateTicket($operation->ticket_id, [
             'due_by' => $dueDate,
             'custom_fields' => $updatedFields,
             'tags' => array_values(array_unique($filteredTags)),
@@ -300,17 +325,17 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             "- Tag: {$dueDateTag}",
             "- Operation: {$marker}",
         ];
-        if (!empty($operation->payload['processing_phase'])) {
+        if (! empty($operation->payload['processing_phase'])) {
             $noteLines[] = '- Processing Phase: '.$operation->payload['processing_phase'];
         }
-        if (!empty($operation->payload['reason'])) {
+        if (! empty($operation->payload['reason'])) {
             $noteLines[] = '- Lý do: '.$operation->payload['reason'];
         }
-        if (!empty($operation->payload['agent_name'])) {
+        if (! empty($operation->payload['agent_name'])) {
             $noteLines[] = '- Người thực hiện: '.$operation->payload['agent_name'];
         }
 
-        if (!$freshdesk->addTicketNote(
+        if (! $freshdesk->addTicketNote(
             $operation->ticket_id,
             implode("\n", $noteLines),
             true
@@ -322,6 +347,65 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         }
 
         return (string) $operation->ticket_id;
+    }
+
+    private function changeGroup(
+        FreshdeskApiService $freshdesk,
+        FreshdeskOutboundOperation $operation
+    ): string {
+        $remote = $freshdesk->getTicket($operation->ticket_id);
+        if (! is_array($remote)) {
+            throw new \RuntimeException('Unable to reconcile Freshdesk ticket before Group update.');
+        }
+
+        $oldGroupId = (string) ($operation->payload['old_group_id'] ?? '');
+        $newGroupId = (string) ($operation->payload['new_group_id'] ?? '');
+        if ($oldGroupId === '' || $newGroupId === '') {
+            throw new \RuntimeException('Group outbound operation is missing Group IDs.');
+        }
+
+        $remoteGroupId = (string) ($remote['group_id'] ?? '');
+        if ($remoteGroupId !== $newGroupId) {
+            if ($remoteGroupId !== '' && $remoteGroupId !== $oldGroupId) {
+                throw new FreshdeskOutboundConflictException(
+                    "Freshdesk Group conflict: expected {$oldGroupId}, found {$remoteGroupId}."
+                );
+            }
+
+            if (! $freshdesk->updateTicket($operation->ticket_id, [
+                'group_id' => (int) $newGroupId,
+            ])) {
+                throw new \RuntimeException('Freshdesk Group PUT failed.');
+            }
+        }
+
+        $changedAt = Carbon::parse((string) ($operation->payload['changed_at'] ?? now()))
+            ->setTimezone('Asia/Bangkok')
+            ->format('H:i:s d-m-Y');
+        $oldGroupName = $this->escapeNoteValue($operation->payload['old_group_name'] ?? $oldGroupId);
+        $newGroupName = $this->escapeNoteValue($operation->payload['new_group_name'] ?? $newGroupId);
+        $agentName = $this->escapeNoteValue($operation->payload['agent_name'] ?? 'System');
+        $noteBody = implode('<br>', [
+            '<strong>Nhóm đã được thay đổi</strong>',
+            "<strong>Thời gian:</strong> {$changedAt}",
+            "<strong>Từ:</strong> {$oldGroupName} <strong>Sang:</strong> {$newGroupName}",
+            "<strong>Người thay đổi:</strong> {$agentName}",
+        ]);
+
+        if (! $freshdesk->addTicketNote($operation->ticket_id, $noteBody, true)) {
+            throw new \RuntimeException('Freshdesk Group audit note POST failed.');
+        }
+
+        return (string) $operation->ticket_id;
+    }
+
+    private function escapeNoteValue(mixed $value): string
+    {
+        return htmlspecialchars(
+            trim((string) $value),
+            ENT_QUOTES | ENT_SUBSTITUTE,
+            'UTF-8'
+        );
     }
 
     private function customFieldKey(array $customFields, array $prefixes, string $fallback): string

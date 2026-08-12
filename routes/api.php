@@ -18,6 +18,7 @@ Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
 
 Route::prefix('tickets')->middleware('auth.basic.fd')->group(function () {
     Route::post('/change-due-date', [TicketActionController::class, 'changeDueDate']);
+    Route::post('/change-group', [TicketActionController::class, 'changeGroup']);
     Route::get('/{id}/history', [TicketActionController::class, 'getHistory'])->whereNumber('id');
 });
 
