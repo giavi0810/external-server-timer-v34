@@ -226,6 +226,7 @@ class AppTimerSyncService
             'cf_rt_overdue' => $rtOverdue ? 'Yes' : 'No',
             'cf_ttr_time' => ($ttrDiff < 0 ? '-' : '') . $this->formatDuration(abs($ttrDiff)),
             'cf_ttr_overdue' => $ttrOverdue ? 'Yes' : 'No',
+            'cf_processing_mode' => $ttrMetric->processing_mode,
         ];
 
         $firstFailedMetric = $ticket->slaStages()
