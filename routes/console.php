@@ -20,6 +20,9 @@ Schedule::command('freshdesk-spool:recover --limit=500')
 Schedule::command('ticket-events:recover-processing --limit=500')
     ->everyMinute()
     ->withoutOverlapping(5);
+Schedule::command('sla-overdue:scan --limit=500')
+    ->everyMinute()
+    ->withoutOverlapping(5);
 Schedule::command('freshdesk-spool:gc --limit=1000')
     ->everyMinute()
     ->withoutOverlapping(5);

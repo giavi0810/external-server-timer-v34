@@ -214,7 +214,11 @@ class AppTimerSyncService
         $closedAfterDue = $ticket->closed_at
             && $ttrMetric->latest_due_date_ttr
             && $ticket->closed_at->greaterThan($ttrMetric->latest_due_date_ttr);
-        $ttrOverdue = $ttrUsed > $ttrTotal || $closedAfterDue;
+        $openRunningAfterDue = !$ticket->closed_at
+            && $ticket->isRunning()
+            && $ttrMetric->latest_due_date_ttr
+            && now()->greaterThan($ttrMetric->latest_due_date_ttr);
+        $ttrOverdue = $ttrUsed > $ttrTotal || $closedAfterDue || $openRunningAfterDue;
         $ttrDiff = $ttrTotal - $ttrUsed;
 
         $fields = [
