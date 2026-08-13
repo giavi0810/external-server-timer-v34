@@ -75,6 +75,7 @@ class DueDateChangedHandler
             return;
         }
         $newDue = Carbon::parse($newDueRaw);
+        $dueChanged = !$oldDue || !$oldDue->equalTo($newDue);
 
         $newFrDueRaw = $ticketData['fr_due_by']
             ?? ($ticketData['frDueBy'] ?? null)
@@ -112,9 +113,26 @@ class DueDateChangedHandler
         $this->recalculateSlaOnDueDateChange($ticket, $oldDue, $eventAt);
 
         $ticket->save();
-        $this->recordDueDateStage($ticket, $event, $oldDue, $newDue, $eventAt, $customFields);
+        if ($dueChanged) {
+            $this->recordDueDateStage(
+                $ticket,
+                $event,
+                $oldDue,
+                $newDue,
+                $eventAt,
+                $customFields,
+                $ttrMetric->processing_mode
+            );
+        } else {
+            Log::info('DueDateChangedHandler: bỏ qua stage vì due_by không đổi', [
+                'ticket_id' => $ticketId,
+                'due_by' => $newDue->toIso8601String(),
+            ]);
+        }
 
-        $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
+        if ($dueChanged) {
+            $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
+        }
         
         if ($rtMetric->latest_due_date_rt) {
             $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
@@ -133,7 +151,8 @@ class DueDateChangedHandler
         ?Carbon $oldDue,
         Carbon $newDue,
         Carbon $eventAt,
-        array $customFields
+        array $customFields,
+        string $processingMode
     ): void {
         $policy = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
         if (!$policy || !$oldDue) {
@@ -149,7 +168,7 @@ class DueDateChangedHandler
             'priority_stage_number' => null,
             'trigger_type' => 'due_date_change',
             'priority' => $ticket->priority,
-            'processing_mode' => 'due-driven',
+            'processing_mode' => $processingMode,
             'opened_at' => $eventAt,
             'opened_by_event_id' => $event->id,
         ]);
