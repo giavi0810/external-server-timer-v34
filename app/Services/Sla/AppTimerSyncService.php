@@ -2,7 +2,6 @@
 
 namespace App\Services\Sla;
 
-use App\Models\FreshdeskGroup;
 use App\Models\Ticket;
 use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupMetric;
@@ -44,10 +43,6 @@ class AppTimerSyncService
         $payload = [
             'custom_fields' => $customFields,
         ];
-        $fallbackGroupId = $this->resolveOverdueFallbackGroupId($ticket);
-        if ($fallbackGroupId !== null) {
-            $payload['group_id'] = $fallbackGroupId;
-        }
 
         $synced = $this->freshdeskService->updateTicket($ticket->ticket_id, $payload);
 
@@ -72,7 +67,6 @@ class AppTimerSyncService
         Log::info("SLA Timer synced to Freshdesk", [
             'ticket_id' => $ticket->ticket_id,
             'json_size' => strlen($jsonString),
-            'reassigned_group' => $payload['group_id'] ?? false,
         ]);
     }
 
@@ -291,32 +285,6 @@ class AppTimerSyncService
             ->sum(fn (TicketGroupMetric $groupMetric) => $this->effectiveGroupUsed($groupMetric));
 
         return max((int) $metric->used_seconds, (int) $groupUsed);
-    }
-
-    protected function resolveOverdueFallbackGroupId(Ticket $ticket): int|string|null
-    {
-        $ticket->loadMissing('groupMetrics');
-        $hasViolatedGroup = $ticket->groupMetrics
-            ->whereNull('group_id')
-            ->contains(fn (TicketGroupMetric $metric): bool =>
-                $this->effectiveGroupUsed($metric) > max(0, (int) $metric->total_seconds)
-            );
-
-        if (!$hasViolatedGroup || $ticket->getCurrentGroupLayer() === 'L1') {
-            return null;
-        }
-
-        $groupId = FreshdeskGroup::query()
-            ->where('is_active', true)
-            ->where('main_layer', 'L1')
-            ->orderBy('group_id')
-            ->value('group_id');
-
-        if ($groupId === null) {
-            return null;
-        }
-
-        return ctype_digit((string) $groupId) ? (int) $groupId : (string) $groupId;
     }
 
     protected function formatDuration(int $seconds): string
