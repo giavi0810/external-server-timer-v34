@@ -9,7 +9,10 @@ use App\Models\FreshdeskGroup;
 use App\Services\FreshdeskApiService;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/health', [HealthCheckController::class, 'check']);
+Route::middleware('throttle:60,1')->group(function () {
+    Route::get('/health', [HealthCheckController::class, 'check']);
+    Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
+});
 
 Route::prefix('webhooks')->middleware('auth.basic.fd')->group(function () {
     Route::post('/freshdesk', [WebhookController::class, 'handleFreshdeskTicketEvent']);
@@ -23,7 +26,6 @@ Route::prefix('tickets')->middleware('auth.basic.fd')->group(function () {
 });
 
 Route::prefix('admin')->middleware('auth.basic.fd')->group(function () {
-    Route::get('/health/db', [HealthCheckController::class, 'checkDb']);
     Route::get('/rocket-chat-statuses', [RocketChatDeliveryStatusController::class, 'index']);
     Route::post('/refresh-groups', function () {
         if (class_exists(FreshdeskApiService::class)) {
