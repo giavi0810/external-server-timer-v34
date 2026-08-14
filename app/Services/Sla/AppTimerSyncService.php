@@ -2,6 +2,7 @@
 
 namespace App\Services\Sla;
 
+use App\Models\FreshdeskGroup;
 use App\Models\Ticket;
 use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupMetric;
