@@ -35,7 +35,7 @@ RUN apk add --no-cache \
     $PHPIZE_DEPS
 
 # Install PHP extensions
-RUN docker-php-ext-install pdo pdo_pgsql pgsql bcmath gd zip opcache mbstring
+RUN docker-php-ext-install pdo pdo_pgsql pgsql bcmath gd zip opcache mbstring pcntl
 
 # Install PECL redis
 RUN pecl install redis && docker-php-ext-enable redis

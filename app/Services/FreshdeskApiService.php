@@ -16,7 +16,7 @@ class FreshdeskApiService
     protected string $apiKey;
     protected ?array $lastErrorContext = null;
 
-    public function __construct()
+    public function __construct(private readonly FreshdeskApiRateLimiter $rateLimiter)
     {
         $this->domain = (string) config('freshdesk.domain', '');
         $this->apiKey = (string) config('freshdesk.api_key', '');
@@ -129,6 +129,7 @@ class FreshdeskApiService
         $url = "https://{$this->domain}/api/v2/ticket_fields?type=default_group";
 
         Log::info("FreshdeskApiService: Calling API to refresh groups", ['url' => $url]);
+        $this->rateLimiter->acquire('refresh_group_mappings');
 
         $response = Http::withBasicAuth($this->apiKey, 'X')
             ->timeout(30)
@@ -239,6 +240,7 @@ class FreshdeskApiService
         }
 
         $url = "https://{$this->domain}/api/v2/tickets/{$ticketId}";
+        $this->rateLimiter->acquire('get_ticket');
 
         $response = Http::withBasicAuth($this->apiKey, 'X')
             ->get($url);
@@ -288,6 +290,7 @@ class FreshdeskApiService
         }
 
         $url = "https://{$this->domain}/api/v2/tickets";
+        $this->rateLimiter->acquire('create_ticket');
 
         try {
             $response = Http::withBasicAuth($this->apiKey, 'X')
@@ -335,6 +338,8 @@ class FreshdeskApiService
             throw new \RuntimeException('Freshdesk credentials are missing.');
         }
 
+        $this->rateLimiter->acquire('find_ticket_by_operation_marker');
+
         $response = Http::withBasicAuth($this->apiKey, 'X')
             ->timeout(30)
             ->get("https://{$this->domain}/api/v2/search/tickets", [
@@ -362,6 +367,7 @@ class FreshdeskApiService
         }
 
         $url = "https://{$this->domain}/api/v2/tickets/{$ticketId}/notes";
+        $this->rateLimiter->acquire('add_ticket_note');
 
         $payload = [
             'body' => $body,
@@ -481,6 +487,7 @@ class FreshdeskApiService
         }
 
         $url = "https://{$this->domain}/api/v2/tickets/{$ticketId}";
+        $this->rateLimiter->acquire('update_ticket');
 
         try {
             $response = Http::withBasicAuth($this->apiKey, 'X')

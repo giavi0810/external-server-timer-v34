@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\FreshdeskApiRateLimitExceededException;
 use App\Exceptions\FreshdeskOutboundConflictException;
 use App\Exceptions\UncertainFreshdeskOutcomeException;
 use App\Models\FreshdeskOutboundOperation;
@@ -97,6 +98,29 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
                     'last_error' => null,
                     'remote_id' => $remoteId,
                 ]);
+        } catch (FreshdeskApiRateLimitExceededException $exception) {
+            FreshdeskOutboundOperation::query()
+                ->whereKey($this->operationId)
+                ->where('state', 'processing')
+                ->where('lease_token', $this->leaseToken)
+                ->where('generation', $this->generation)
+                ->where('sync_epoch', $this->syncEpoch)
+                ->where('operation_version', $this->operationVersion)
+                ->update([
+                    'state' => 'ready',
+                    'lease_token' => null,
+                    'visibility_at' => null,
+                    'available_at' => now()->addSeconds(max(1, $exception->retryAfterSeconds)),
+                    'last_error' => $exception->getMessage(),
+                ]);
+            Log::info('Freshdesk outbound operation deferred by global API rate limit', [
+                'operation_id' => $this->operationId,
+                'ticket_id' => $operation->ticket_id,
+                'action' => $exception->action,
+                'limit' => $exception->limit,
+                'window_seconds' => $exception->windowSeconds,
+                'retry_after_seconds' => $exception->retryAfterSeconds,
+            ]);
         } catch (FreshdeskOutboundConflictException $exception) {
             FreshdeskOutboundOperation::query()
                 ->whereKey($this->operationId)
@@ -335,11 +359,22 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             $noteLines[] = '- Người thực hiện: '.$operation->payload['agent_name'];
         }
 
-        if (! $freshdesk->addTicketNote(
-            $operation->ticket_id,
-            implode("\n", $noteLines),
-            true
-        )) {
+        try {
+            $noteAdded = $freshdesk->addTicketNote(
+                $operation->ticket_id,
+                implode("\n", $noteLines),
+                true
+            );
+        } catch (FreshdeskApiRateLimitExceededException $exception) {
+            $noteAdded = false;
+            Log::info('Freshdesk Due Date audit note skipped because the API limit is full', [
+                'operation_id' => $operation->operation_id,
+                'ticket_id' => $operation->ticket_id,
+                'retry_after_seconds' => $exception->retryAfterSeconds,
+            ]);
+        }
+
+        if (! $noteAdded) {
             Log::warning('Freshdesk Due Date updated but audit note could not be added', [
                 'operation_id' => $operation->operation_id,
                 'ticket_id' => $operation->ticket_id,
