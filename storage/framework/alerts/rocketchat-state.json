@@ -1,17 +1,17 @@
 {
     "version": 1,
     "global": {
-        "last_sent_at": 1786957805
+        "last_sent_at": 1786958645
     },
     "notifications": {
         "system:3264db4bef3c6cfb786c42dc41d9a3280d9f17e6": {
             "last_sent_at": 1786515959
         },
         "system:40670d6fe1373b95394bea99c5ddcb629851e90d": {
-            "last_sent_at": 1786957805
+            "last_sent_at": 1786958466
         },
         "system:cb25e5e43f9206859d85b222df32a09a0ce708f7": {
-            "last_sent_at": 1786957565
+            "last_sent_at": 1786958645
         }
     },
     "redis_incidents": {
