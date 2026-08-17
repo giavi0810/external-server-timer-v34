@@ -9,13 +9,27 @@
 
 ## Vận hành queue v34
 
-Queue worker được đặt trong profile `workers` để `docker compose up` thông thường
-không vô tình xử lý backlog. Trước khi bật worker, cần kiểm kê các job đang chờ
-và đánh giá tác động cập nhật ngược về Freshdesk.
+Production tách worker theo đúng tải nghiệp vụ để logic SLA không chặn luồng cập
+nhật ngược về Freshdesk. Hiện hệ thống có worker riêng cho `freshdesk-ingest`,
+`ticket-logic` và `freshdesk-outbound`; chưa có job sử dụng queue `default`.
 
 ```bash
-docker exec timer-v34-redis redis-cli ZCARD laravel-database-queues:default:delayed
-docker compose --profile workers up -d queue-worker
+docker compose -f docker-compose.yml up -d \
+    freshdesk-ingest-worker \
+    ticket-logic-worker \
+    freshdesk-outbound-worker \
+    durable-scheduler \
+    durable-dispatcher
+```
+
+Khi nâng cấp từ cấu hình `queue-worker` cũ, phải chờ queue đang chạy hoàn tất rồi
+dừng container `timer-v34-queue-worker` trước khi bật hai worker mới. Không để
+worker cũ và mới chạy song song ngoài thời gian chuyển đổi có kiểm soát.
+
+Sau khi build image, xác nhận PHP CLI có extension điều khiển signal:
+
+```bash
+docker run --rm --entrypoint php timer-v34-app:latest -m | grep -Fx pcntl
 ```
 
 Môi trường triển khai phải dùng `APP_ENV=production` và `APP_DEBUG=false` để API
@@ -23,8 +37,9 @@ không trả stack trace cho phía gửi webhook.
 
 ### Production / Dockhand
 
-`docker-compose.yml` đóng source vào image, giữ `storage` trong named volume và
-mặc định gửi Laravel log ra `stderr` để nền tảng thu thập được Active Logs.
+`docker-compose.yml` đóng source vào image, giữ `storage` trong named volume,
+kiểm tra health của PostgreSQL, Redis, PHP-FPM và webserver, đồng thời cho worker
+dừng mềm trước khi Docker buộc kết thúc tiến trình.
 
 ### Local
 

@@ -11,6 +11,14 @@ return [
     'domain'  => env('FRESHDESK_DOMAIN'),
     'api_key' => env('FRESHDESK_API_KEY'),
 
+    'api_rate_limit' => [
+        'enabled' => filter_var(env('FRESHDESK_API_RATE_LIMIT_ENABLED', true), FILTER_VALIDATE_BOOL),
+        'max_requests' => (int) env('FRESHDESK_API_RATE_LIMIT', 50),
+        'window_seconds' => (int) env('FRESHDESK_API_RATE_WINDOW_SECONDS', 60),
+        'redis_connection' => env('FRESHDESK_API_RATE_LIMIT_REDIS_CONNECTION', 'default'),
+        'key' => env('FRESHDESK_API_RATE_LIMIT_KEY', 'freshdesk:api:global'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Basic Auth for Webhook Endpoint
@@ -140,4 +148,3 @@ return [
     'go_live_timestamp' => env('GO_LIVE_TIMESTAMP'),
 
 ];
-
