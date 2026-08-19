@@ -20,7 +20,6 @@ class TicketStatusMetric extends Model
         'pending_total_seconds',
         'pending_started_at',
         'end_total_seconds',
-        'end_started_at',
     ];
 
     protected $casts = [
@@ -31,7 +30,6 @@ class TicketStatusMetric extends Model
         'pending_total_seconds' => 'integer',
         'pending_started_at' => 'datetime',
         'end_total_seconds' => 'integer',
-        'end_started_at' => 'datetime',
     ];
 
     public function ticket(): BelongsTo

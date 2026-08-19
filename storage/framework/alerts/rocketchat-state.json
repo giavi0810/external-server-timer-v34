@@ -1,29 +1,9 @@
 {
     "version": 1,
-    "global": {
-        "last_sent_at": 1786958645
-    },
+    "global": [],
     "notifications": {
-        "system:3264db4bef3c6cfb786c42dc41d9a3280d9f17e6": {
-            "last_sent_at": 1786515959
-        },
-        "system:40670d6fe1373b95394bea99c5ddcb629851e90d": {
-            "last_sent_at": 1786958466
-        },
-        "system:cb25e5e43f9206859d85b222df32a09a0ce708f7": {
-            "last_sent_at": 1786958645
-        }
+        "system:40670d6fe1373b95394bea99c5ddcb629851e90d": [],
+        "system:cb25e5e43f9206859d85b222df32a09a0ce708f7": []
     },
-    "redis_incidents": {
-        "8ae7e9cc6883ab0f6c371a19385c944bef660b0f": {
-            "status": "up",
-            "first_detected_at": 1786948431,
-            "last_detected_at": 1786948431,
-            "occurrence_count": 1,
-            "last_down_alert_at": 1786948432,
-            "down_alert_sent_at": 1786948432,
-            "recovered_at": 1786948502,
-            "recovery_alert_sent_at": 1786948502
-        }
-    }
+    "redis_incidents": []
 }

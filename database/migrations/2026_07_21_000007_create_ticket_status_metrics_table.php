@@ -18,7 +18,6 @@ return new class extends Migration
             $table->unsignedInteger('pending_total_seconds')->default(0);
             $table->timestampTz('pending_started_at')->nullable();
             $table->unsignedInteger('end_total_seconds')->default(0);
-            $table->timestampTz('end_started_at')->nullable();
             $table->timestampsTz();
 
             $table->foreign('ticket_id')->references('ticket_id')->on('tickets')->cascadeOnDelete();
