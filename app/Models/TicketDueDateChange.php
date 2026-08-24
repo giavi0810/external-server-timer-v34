@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TicketDueDateChange extends Model
 {
+    protected $table = 'ticket_due_date_changed';
+
     protected $fillable = [
         'ticket_id', 'ticket_sla_stage_id', 'change_number', 'old_due_at',
         'new_due_at', 'processing_phase', 'reason_code', 'reason_detail',
