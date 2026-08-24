@@ -67,7 +67,7 @@ class DurableWebhookSpool
     public function findFiles(string $state, int $limit, ?callable $filter = null): array
     {
         $root = $this->statePath($state);
-        if (!is_dir($root)) {
+        if (! is_dir($root)) {
             return [];
         }
 
@@ -77,12 +77,12 @@ class DurableWebhookSpool
         );
 
         foreach ($iterator as $file) {
-            if (!$file->isFile() || !str_ends_with($file->getFilename(), '.json')) {
+            if (! $file->isFile() || ! str_ends_with($file->getFilename(), '.json')) {
                 continue;
             }
 
             $metadata = $this->parseFileName($file->getFilename());
-            if (!$metadata || ($filter && !$filter($metadata, $file->getPathname()))) {
+            if (! $metadata || ($filter && ! $filter($metadata, $file->getPathname()))) {
                 continue;
             }
 
@@ -93,6 +93,7 @@ class DurableWebhookSpool
         }
 
         sort($files, SORT_STRING);
+
         return $files;
     }
 
@@ -112,7 +113,7 @@ class DurableWebhookSpool
     public function claimForProcessing(string $enqueuedPath, string $expectedToken): array
     {
         $metadata = $this->requireMetadata($enqueuedPath);
-        if (!hash_equals($metadata['token'], $expectedToken)) {
+        if (! hash_equals($metadata['token'], $expectedToken)) {
             throw new RuntimeException('Freshdesk spool delivery token is stale.');
         }
 
@@ -134,7 +135,7 @@ class DurableWebhookSpool
 
         $envelope = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
         foreach (['receipt_id', 'payload_checksum', 'payload'] as $key) {
-            if (!array_key_exists($key, $envelope)) {
+            if (! array_key_exists($key, $envelope)) {
                 throw new RuntimeException("Freshdesk spool envelope is missing {$key}.");
             }
         }
@@ -143,7 +144,7 @@ class DurableWebhookSpool
             'sha256',
             json_encode($envelope['payload'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
         );
-        if (!hash_equals($envelope['payload_checksum'], $checksum)) {
+        if (! hash_equals($envelope['payload_checksum'], $checksum)) {
             throw new RuntimeException('Freshdesk spool checksum mismatch.');
         }
 
@@ -155,20 +156,35 @@ class DurableWebhookSpool
         return $this->moveWithToken($processingPath, 'committed-gc', $expectedToken, time(), false);
     }
 
-    public function retry(string $path, string $expectedToken, ?\Throwable $error = null): string
-    {
+    public function retry(
+        string $path,
+        string $expectedToken,
+        ?\Throwable $error = null,
+        ?string $receivedAt = null
+    ): string {
         $metadata = $this->requireMetadata($path);
-        if (!hash_equals($metadata['token'], $expectedToken)) {
+        if (! hash_equals($metadata['token'], $expectedToken)) {
             throw new RuntimeException('Cannot retry a stale Freshdesk spool lease.');
         }
 
         $attempt = $metadata['attempt'] + 1;
-        if ($attempt >= config('freshdesk_spool.max_attempts')) {
+        if (
+            $attempt >= max(1, (int) config('freshdesk_spool.max_attempts'))
+            || $this->maximumAgeExceeded($path, $receivedAt)
+        ) {
             return $this->moveWithToken($path, 'quarantine', $expectedToken, time(), true, $attempt);
         }
 
         $backoff = config('freshdesk_spool.backoff');
         $delay = $backoff[min($attempt - 1, count($backoff) - 1)] ?? 600;
+        if ($attempt >= max(1, (int) config('freshdesk_spool.jitter_after_attempt', 7))) {
+            $delay += $this->deterministicJitter(
+                $metadata['receipt_id'],
+                $attempt,
+                max(0, (int) config('freshdesk_spool.retry_jitter_seconds', 120))
+            );
+        }
+
         return $this->moveWithToken($path, 'ready', $expectedToken, time() + $delay, true, $attempt);
     }
 
@@ -177,13 +193,51 @@ class DurableWebhookSpool
         return $this->moveWithToken($path, 'quarantine', $expectedToken, time(), true);
     }
 
+    public function findReceipt(string $state, string $receiptId): ?string
+    {
+        $receiptId = strtolower(trim($receiptId));
+        $files = $this->findFiles(
+            $state,
+            1,
+            fn (array $metadata): bool => hash_equals($metadata['receipt_id'], $receiptId)
+        );
+
+        return $files[0] ?? null;
+    }
+
+    public function releaseQuarantined(string $path): string
+    {
+        if (! $this->isInState($path, 'quarantine')) {
+            throw new RuntimeException('Only quarantined Freshdesk spool receipts can be released.');
+        }
+
+        $metadata = $this->requireMetadata($path);
+
+        return $this->moveWithToken(
+            $path,
+            'ready',
+            $metadata['token'],
+            time(),
+            true,
+            $metadata['attempt']
+        );
+    }
+
+    public function isInState(string $path, string $state): bool
+    {
+        $root = rtrim($this->statePath($state), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
+        $normalizedPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+        $normalizedRoot = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $root);
+
+        return str_starts_with($normalizedPath, $normalizedRoot);
+    }
+
     public function recoverExpired(string $state, int $limit): int
     {
         $leaseSeconds = $state === 'enqueued'
             ? config('freshdesk_spool.enqueued_visibility_seconds')
             : config('freshdesk_spool.processing_lease_seconds');
-        $files = $this->findFiles($state, $limit, fn (array $metadata): bool =>
-            $metadata['leased_at'] + $leaseSeconds <= time()
+        $files = $this->findFiles($state, $limit, fn (array $metadata): bool => time() >= $metadata['leased_at'] + $leaseSeconds
         );
         $recovered = 0;
 
@@ -203,8 +257,7 @@ class DurableWebhookSpool
     public function collectGarbage(int $limit): int
     {
         $cutoff = time() - config('freshdesk_spool.gc_after_seconds');
-        $files = $this->findFiles('committed-gc', $limit, fn (array $metadata): bool =>
-            $metadata['leased_at'] <= $cutoff
+        $files = $this->findFiles('committed-gc', $limit, fn (array $metadata): bool => $metadata['leased_at'] <= $cutoff
         );
         $deleted = 0;
 
@@ -235,7 +288,7 @@ class DurableWebhookSpool
         ?int $attempt = null
     ): string {
         $metadata = $this->requireMetadata($path);
-        if (!hash_equals($metadata['token'], $expectedToken)) {
+        if (! hash_equals($metadata['token'], $expectedToken)) {
             throw new RuntimeException('Freshdesk spool lease token mismatch.');
         }
 
@@ -245,13 +298,51 @@ class DurableWebhookSpool
             .$this->fileName($metadata['receipt_id'], $attempt, $timestamp, $token);
         $this->ensureDirectory(dirname($destination));
         $this->renameDurably($path, $destination);
+
         return $destination;
+    }
+
+    private function maximumAgeExceeded(string $path, ?string $receivedAt): bool
+    {
+        $maximumAge = max(0, (int) config('freshdesk_spool.max_age_seconds', 86400));
+        if ($maximumAge === 0) {
+            return false;
+        }
+
+        if ($receivedAt === null) {
+            $json = @file_get_contents($path);
+            if ($json !== false) {
+                $envelope = json_decode($json, true);
+                $receivedAt = is_array($envelope) && is_string($envelope['received_at'] ?? null)
+                    ? $envelope['received_at']
+                    : null;
+            }
+        }
+
+        if ($receivedAt === null) {
+            return false;
+        }
+
+        $receivedTimestamp = strtotime($receivedAt);
+
+        return $receivedTimestamp !== false && $receivedTimestamp + $maximumAge <= time();
+    }
+
+    private function deterministicJitter(string $receiptId, int $attempt, int $maximum): int
+    {
+        if ($maximum === 0) {
+            return 0;
+        }
+
+        $prefix = substr(hash('sha256', "{$receiptId}:{$attempt}"), 0, 8);
+
+        return (int) (hexdec($prefix) % ($maximum + 1));
     }
 
     private function writeDurably(string $path, string $contents): void
     {
         $handle = @fopen($path, 'xb');
-        if (!$handle) {
+        if (! $handle) {
             throw new RuntimeException("Unable to create Freshdesk spool file: {$path}");
         }
 
@@ -264,7 +355,7 @@ class DurableWebhookSpool
                 }
                 $remaining = substr($remaining, $written);
             }
-            if (!fflush($handle) || (function_exists('fsync') && !fsync($handle))) {
+            if (! fflush($handle) || (function_exists('fsync') && ! fsync($handle))) {
                 throw new RuntimeException("Unable to fsync Freshdesk spool file: {$path}");
             }
         } finally {
@@ -276,7 +367,7 @@ class DurableWebhookSpool
     {
         $sourceParent = dirname($source);
         $destinationParent = dirname($destination);
-        if (!@rename($source, $destination)) {
+        if (! @rename($source, $destination)) {
             throw new RuntimeException("Unable to atomically move Freshdesk spool file to {$destination}.");
         }
         $this->syncDirectory($sourceParent);
@@ -295,9 +386,9 @@ class DurableWebhookSpool
         if ($parent !== $directory) {
             $this->ensureDirectory($parent);
         }
-        if (!is_dir($directory) && !@mkdir($directory, 0770)) {
+        if (! is_dir($directory) && ! @mkdir($directory, 0770)) {
             clearstatcache(true, $directory);
-            if (!is_dir($directory)) {
+            if (! is_dir($directory)) {
                 throw new RuntimeException("Unable to create Freshdesk spool directory: {$directory}");
             }
         }
@@ -310,10 +401,11 @@ class DurableWebhookSpool
     private function syncDirectory(string $directory): void
     {
         $binary = config('freshdesk_spool.fsync_dir_binary');
-        if (PHP_OS_FAMILY === 'Windows' || !is_executable($binary)) {
+        if (PHP_OS_FAMILY === 'Windows' || ! is_executable($binary)) {
             if (config('freshdesk_spool.require_directory_fsync')) {
                 throw new RuntimeException("Directory fsync helper is unavailable: {$binary}");
             }
+
             return;
         }
 
@@ -327,7 +419,7 @@ class DurableWebhookSpool
     private function removeEmptyParents(string $directory, string $boundary): void
     {
         while ($directory !== $boundary && str_starts_with($directory, $boundary)) {
-            if (!@rmdir($directory)) {
+            if (! @rmdir($directory)) {
                 return;
             }
             $parent = dirname($directory);
@@ -338,9 +430,10 @@ class DurableWebhookSpool
 
     private function statePath(string $state): string
     {
-        if (!in_array($state, self::STATES, true)) {
+        if (! in_array($state, self::STATES, true)) {
             throw new RuntimeException("Unknown Freshdesk spool state: {$state}");
         }
+
         return rtrim(config('freshdesk_spool.root'), DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$state;
     }
 
@@ -351,7 +444,7 @@ class DurableWebhookSpool
 
     private function parseFileName(string $name): ?array
     {
-        if (!preg_match('/^(\d+)--(\d+)--([0-9a-f-]{36})--([0-9a-f]+|none)\.json$/i', $name, $matches)) {
+        if (! preg_match('/^(\d+)--(\d+)--([0-9a-f-]{36})--([0-9a-f]+|none)\.json$/i', $name, $matches)) {
             return null;
         }
 

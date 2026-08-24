@@ -5,6 +5,7 @@ namespace App\Services\Queue;
 use App\Jobs\PersistFreshdeskWebhookJob;
 use App\Services\Webhooks\DurableWebhookSpool;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 
 class FreshdeskSpoolDispatcher
 {
@@ -14,6 +15,27 @@ class FreshdeskSpoolDispatcher
     {
         $dispatched = 0;
         $failures = 0;
+        $queue = (string) config('freshdesk_spool.queue');
+        $maximumDepth = max(0, (int) config('freshdesk_spool.max_queue_depth', 100));
+
+        if ($maximumDepth > 0) {
+            try {
+                $availableCapacity = max(0, $maximumDepth - Queue::size($queue));
+            } catch (\Throwable $exception) {
+                Log::warning('Unable to inspect Freshdesk ingest queue depth', [
+                    'queue' => $queue,
+                    'reason' => $exception->getMessage(),
+                ]);
+
+                return new DispatchResult(0, 1);
+            }
+
+            if ($availableCapacity === 0) {
+                return new DispatchResult;
+            }
+
+            $limit = min($limit, $availableCapacity);
+        }
 
         foreach ($this->spool->findDueReadyFiles(max(1, $limit)) as $readyPath) {
             try {

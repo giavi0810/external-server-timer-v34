@@ -2,19 +2,22 @@
 
 namespace App\Services;
 
+use App\Exceptions\FreshdeskApiRateLimitExceededException;
+use App\Exceptions\FreshdeskGroupMissingException;
+use App\Exceptions\FreshdeskGroupRefreshFailedException;
+use App\Exceptions\FreshdeskGroupRefreshInProgressException;
 use App\Models\FreshdeskGroup;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use RuntimeException;
 
 class FreshdeskGroupSyncService
 {
     private const LOCK_KEY = 'freshdesk-groups:refresh';
 
-    private const LOCK_SECONDS = 45;
+    private const LAST_SUCCESSFUL_REFRESH_KEY = 'freshdesk-groups:last-successful-refresh';
 
-    private const WAIT_SECONDS = 35;
+    private const MISSING_KEY_PREFIX = 'freshdesk-groups:missing:';
 
     public function __construct(private readonly FreshdeskApiService $freshdesk) {}
 
@@ -43,30 +46,70 @@ class FreshdeskGroupSyncService
             return;
         }
 
+        $missingKey = self::MISSING_KEY_PREFIX.$groupId;
+        if (Cache::has($missingKey)) {
+            throw new FreshdeskGroupMissingException($groupId);
+        }
+
         try {
-            Cache::lock(self::LOCK_KEY, self::LOCK_SECONDS)
-                ->block(self::WAIT_SECONDS, function () use ($groupId): void {
+            Cache::lock(
+                self::LOCK_KEY,
+                max(1, (int) config('freshdesk.group_sync.lock_seconds', 45))
+            )->block(
+                max(0, (int) config('freshdesk.group_sync.lock_wait_seconds', 2)),
+                function () use ($groupId, $missingKey): void {
                     if ($this->isKnownAndActive($groupId)) {
+                        Cache::forget($missingKey);
+
                         return;
+                    }
+
+                    if (Cache::has($missingKey)) {
+                        throw new FreshdeskGroupMissingException($groupId);
+                    }
+
+                    if (Cache::has(self::LAST_SUCCESSFUL_REFRESH_KEY)) {
+                        $this->rememberMissingGroup($missingKey);
+                        throw new FreshdeskGroupMissingException($groupId);
                     }
 
                     Log::notice('Unknown Freshdesk group detected; refreshing group mappings', [
                         'group_id' => $groupId,
                     ]);
-                    $this->freshdesk->refreshGroupMappings();
+                    try {
+                        $this->freshdesk->refreshGroupMappings();
+                    } catch (FreshdeskApiRateLimitExceededException $exception) {
+                        throw $exception;
+                    } catch (\Throwable $exception) {
+                        throw new FreshdeskGroupRefreshFailedException($groupId, $exception);
+                    }
+
+                    Cache::put(
+                        self::LAST_SUCCESSFUL_REFRESH_KEY,
+                        now()->utc()->toIso8601String(),
+                        max(1, (int) config('freshdesk.group_sync.refresh_cooldown_seconds', 1800))
+                    );
 
                     if (! $this->isKnownAndActive($groupId)) {
-                        throw new RuntimeException(
-                            "Freshdesk group {$groupId} was not present after synchronization."
-                        );
+                        $this->rememberMissingGroup($missingKey);
+                        throw new FreshdeskGroupMissingException($groupId);
                     }
-                });
-        } catch (LockTimeoutException $exception) {
-            throw new RuntimeException(
-                "Timed out waiting to synchronize Freshdesk group {$groupId}.",
-                previous: $exception
+
+                    Cache::forget($missingKey);
+                }
             );
+        } catch (LockTimeoutException $exception) {
+            throw new FreshdeskGroupRefreshInProgressException($groupId);
         }
+    }
+
+    private function rememberMissingGroup(string $key): void
+    {
+        Cache::put(
+            $key,
+            true,
+            max(1, (int) config('freshdesk.group_sync.missing_ttl_seconds', 1800))
+        );
     }
 
     private function isKnownAndActive(string $groupId): bool
