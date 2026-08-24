@@ -8,7 +8,7 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'domain'  => env('FRESHDESK_DOMAIN'),
+    'domain' => env('FRESHDESK_DOMAIN'),
     'api_key' => env('FRESHDESK_API_KEY'),
 
     'api_rate_limit' => [
@@ -17,6 +17,13 @@ return [
         'window_seconds' => (int) env('FRESHDESK_API_RATE_WINDOW_SECONDS', 60),
         'redis_connection' => env('FRESHDESK_API_RATE_LIMIT_REDIS_CONNECTION', 'default'),
         'key' => env('FRESHDESK_API_RATE_LIMIT_KEY', 'freshdesk:api:global'),
+    ],
+
+    'group_sync' => [
+        'refresh_cooldown_seconds' => (int) env('FRESHDESK_GROUP_REFRESH_COOLDOWN_SECONDS', 1800),
+        'missing_ttl_seconds' => (int) env('FRESHDESK_GROUP_MISSING_TTL_SECONDS', 1800),
+        'lock_seconds' => (int) env('FRESHDESK_GROUP_LOCK_SECONDS', 45),
+        'lock_wait_seconds' => (int) env('FRESHDESK_GROUP_LOCK_WAIT_SECONDS', 2),
     ],
 
     /*
@@ -49,7 +56,6 @@ return [
     'group_layers' => [
         // Auto-detected dynamically (L1, L2, L3, L4)
     ],
-
 
     /*
     |--------------------------------------------------------------------------
@@ -97,9 +103,9 @@ return [
     */
 
     'priority_weight' => [
-        'Low'    => 1,
+        'Low' => 1,
         'Medium' => 2,
-        'High'   => 3,
+        'High' => 3,
         'Urgent' => 4,
     ],
 

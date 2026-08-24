@@ -2,14 +2,19 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\FreshdeskApiRateLimitExceededException;
+use App\Exceptions\FreshdeskGroupMissingException;
+use App\Exceptions\FreshdeskGroupRefreshFailedException;
+use App\Exceptions\FreshdeskGroupRefreshInProgressException;
 use App\Http\Controllers\WebhookController;
 use App\Http\Requests\FreshdeskWebhookRequest;
 use App\Services\FreshdeskGroupSyncService;
 use App\Services\Webhooks\DurableWebhookSpool;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class PersistFreshdeskWebhookJob implements ShouldQueue
@@ -17,6 +22,7 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
     use Queueable;
 
     public int $timeout = 105;
+
     public int $tries = 1;
 
     public function __construct(
@@ -30,8 +36,7 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
         DurableWebhookSpool $spool,
         WebhookController $controller,
         FreshdeskGroupSyncService $groupSync
-    ): void
-    {
+    ): void {
         try {
             $claim = $spool->claimForProcessing($this->spoolPath, $this->deliveryToken);
         } catch (\Throwable $exception) {
@@ -39,15 +44,20 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
                 'spool_path' => $this->spoolPath,
                 'reason' => $exception->getMessage(),
             ]);
+
             return;
         }
 
         $processingPath = $claim['destination'];
         $processingToken = $claim['token'];
+        $receivedAt = null;
 
         try {
             $envelope = $spool->readEnvelope($processingPath);
-            if (!hash_equals($claim['receipt_id'], (string) $envelope['receipt_id'])) {
+            $receivedAt = is_string($envelope['received_at'] ?? null)
+                ? $envelope['received_at']
+                : null;
+            if (! hash_equals($claim['receipt_id'], (string) $envelope['receipt_id'])) {
                 throw new RuntimeException('Freshdesk spool receipt ID mismatch.');
             }
 
@@ -56,6 +66,7 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
                 ->exists();
             if ($committedReceipt) {
                 $spool->markCommitted($processingPath, $processingToken);
+
                 return;
             }
 
@@ -115,11 +126,12 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
                     'receipt_id' => $envelope['receipt_id'],
                     'http_status' => $response->getStatusCode(),
                 ]);
+
                 return;
             }
 
             $spool->markCommitted($processingPath, $processingToken);
-        } catch (\Illuminate\Http\Exceptions\HttpResponseException $exception) {
+        } catch (HttpResponseException $exception) {
             $spool->quarantine($processingPath, $processingToken);
             Log::error('Freshdesk spool payload quarantined after request validation failure', [
                 'receipt_id' => $claim['receipt_id'],
@@ -127,7 +139,12 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
             ]);
         } catch (\Throwable $exception) {
             try {
-                $spool->retry($processingPath, $processingToken, $exception);
+                $retryPath = $spool->retry(
+                    $processingPath,
+                    $processingToken,
+                    $exception,
+                    $receivedAt
+                );
             } catch (\Throwable $recoveryException) {
                 Log::critical('Freshdesk spool file could not be returned to ready state', [
                     'receipt_id' => $claim['receipt_id'],
@@ -137,11 +154,33 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
                 throw $recoveryException;
             }
 
-            Log::warning('Freshdesk webhook persistence deferred', [
+            $context = [
                 'receipt_id' => $claim['receipt_id'],
                 'attempt' => $claim['attempt'] + 1,
+                'reason_code' => $this->failureReason($exception),
                 'reason' => $exception->getMessage(),
-            ]);
+            ];
+
+            if ($exception instanceof FreshdeskGroupMissingException) {
+                $context['group_id'] = $exception->groupId;
+            }
+
+            if ($spool->isInState($retryPath, 'quarantine')) {
+                Log::error('Freshdesk webhook persistence quarantined after retry policy exhausted', $context);
+            } else {
+                Log::warning('Freshdesk webhook persistence deferred', $context);
+            }
         }
+    }
+
+    private function failureReason(\Throwable $exception): string
+    {
+        return match (true) {
+            $exception instanceof FreshdeskGroupMissingException => 'group_missing',
+            $exception instanceof FreshdeskGroupRefreshInProgressException => 'group_refresh_in_progress',
+            $exception instanceof FreshdeskGroupRefreshFailedException => 'group_refresh_failed',
+            $exception instanceof FreshdeskApiRateLimitExceededException => 'freshdesk_rate_limited',
+            default => 'processing_failed',
+        };
     }
 }

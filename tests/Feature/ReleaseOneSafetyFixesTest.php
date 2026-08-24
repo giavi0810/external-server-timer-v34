@@ -298,9 +298,9 @@ class ReleaseOneSafetyFixesTest extends TestCase
                 'ticket_data' => [
                     'due_by' => '2026-08-08T16:59:00Z',
                     'custom_fields' => [
-                        'cf_processing_mode_2885394' => 'due-driven',
-                        'cf_processing_phase_2885394' => 'Investigation',
-                        'cf_change_due_reason_2885394' => 'Phase changed',
+                        'cf_processing_mode' => 'due-driven',
+                        'cf_processing_phase' => 'Investigation',
+                        'cf_change_due_reason' => 'Phase changed',
                     ],
                 ],
             ],
