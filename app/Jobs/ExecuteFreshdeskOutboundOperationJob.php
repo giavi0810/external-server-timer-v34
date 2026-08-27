@@ -274,17 +274,12 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         FreshdeskApiService $freshdesk,
         FreshdeskOutboundOperation $operation
     ): string {
-        $marker = $this->marker();
         $remote = $freshdesk->getTicket($operation->ticket_id);
         if (! is_array($remote)) {
             throw new \RuntimeException('Unable to reconcile Freshdesk ticket before Due Date update.');
         }
 
         $tags = is_array($remote['tags'] ?? null) ? $remote['tags'] : [];
-        if (in_array($marker, $tags, true)) {
-            return (string) $operation->ticket_id;
-        }
-
         $customFields = is_array($remote['custom_fields'] ?? null)
             ? $remote['custom_fields']
             : [];
@@ -314,6 +309,12 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             throw new \RuntimeException('Due Date outbound operation is missing new_due_date.');
         }
 
+        $alreadyApplied = $this->sameInstant($remote['due_by'] ?? null, $dueDate)
+            && ($customFields[$processingModeKey] ?? null) === 'due-driven';
+        if ($alreadyApplied) {
+            return (string) $operation->ticket_id;
+        }
+
         $updatedFields = [
             $countKey => $nextCount,
             $processingModeKey => 'due-driven',
@@ -332,7 +333,6 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         ));
         $dueDateTag = "due_date_change ({$nextCount})";
         $filteredTags[] = $dueDateTag;
-        $filteredTags[] = $marker;
 
         if (! $freshdesk->updateTicket($operation->ticket_id, [
             'due_by' => $dueDate,
@@ -347,7 +347,6 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             "- Due Date mới: {$dueDate}",
             '- Processing Mode: due-driven',
             "- Tag: {$dueDateTag}",
-            "- Operation: {$marker}",
         ];
         if (! empty($operation->payload['processing_phase'])) {
             $noteLines[] = '- Processing Phase: '.$operation->payload['processing_phase'];
@@ -382,6 +381,19 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
         }
 
         return (string) $operation->ticket_id;
+    }
+
+    private function sameInstant(mixed $first, mixed $second): bool
+    {
+        if (! is_string($first) || trim($first) === '' || ! is_string($second) || trim($second) === '') {
+            return false;
+        }
+
+        try {
+            return Carbon::parse($first)->utc()->equalTo(Carbon::parse($second)->utc());
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function changeGroup(
