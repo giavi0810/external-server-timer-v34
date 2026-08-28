@@ -229,25 +229,53 @@ class TimerService
 
     public function recalculateTtrMetrics(Ticket $ticket, TicketStatusMetric $statusMetric, Carbon $now): void
     {
-        $totalGroupUsed = $ticket->groupMetrics()
-            ->whereNull('group_id')
-            ->whereIn('layer', self::TRACKED_GROUP_LAYERS)
-            ->sum('used_seconds');
-
         $ttrMetric = $ticket->getOrCreateTtrMetric();
-        $ttrMetric->used_seconds = max(0, $totalGroupUsed);
+
+        // TTR is immutable after the first Resolved/Closed checkpoint.
+        if ($ticket->resolved_at || $ticket->closed_at) {
+            return;
+        }
+
+        $ttrMetric->used_seconds = $this->calculateTtrUsedSeconds($ticket, $statusMetric, $now);
+        $ttrMetric->save();
+    }
+
+    public function finalizeTtrUsedTime(Ticket $ticket, TicketStatusMetric $statusMetric, Carbon $endedAt): void
+    {
+        $ttrMetric = $ticket->getOrCreateTtrMetric();
+        $ttrMetric->used_seconds = $this->calculateTtrUsedSeconds($ticket, $statusMetric, $endedAt);
+        $ttrMetric->started_at = null;
+        $ttrMetric->save();
+    }
+
+    protected function calculateTtrUsedSeconds(
+        Ticket $ticket,
+        TicketStatusMetric $statusMetric,
+        Carbon $checkpointAt
+    ): int {
+        if (!$ticket->fd_created_at) {
+            return 0;
+        }
+
+        $createdAt = Carbon::parse($ticket->fd_created_at);
+        $elapsed = max(0, $checkpointAt->timestamp - $createdAt->timestamp);
+        $ttrMetric = $ticket->getOrCreateTtrMetric();
 
         if ($ttrMetric->processing_mode === 'due-driven') {
-            $currentPauseDuration = 0;
-            if ($statusMetric->waiting_started_at) {
-                $currentPauseDuration += $now->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp;
-            }
-            if ($statusMetric->pending_started_at) {
-                $currentPauseDuration += $now->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp;
-            }
-            $ttrMetric->used_seconds += max(0, $currentPauseDuration);
+            return $elapsed;
         }
-        $ttrMetric->save();
+
+        $excluded = max(0, (int) $statusMetric->waiting_total_seconds)
+            + max(0, (int) $statusMetric->pending_total_seconds)
+            + max(0, (int) $statusMetric->end_total_seconds);
+
+        if ($statusMetric->waiting_started_at) {
+            $excluded += max(0, $checkpointAt->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp);
+        }
+        if ($statusMetric->pending_started_at) {
+            $excluded += max(0, $checkpointAt->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp);
+        }
+        return max(0, $elapsed - $excluded);
     }
 
     public function accumulateWaitingTime(TicketStatusMetric $statusMetric, mixed $fromStatus, Carbon $now): void
@@ -279,15 +307,17 @@ class TimerService
         return 0;
     }
 
-    public function finalizeResolutionTime(TicketStatusMetric $statusMetric, Carbon $now): void
+    public function finalizeResolutionTime(Ticket $ticket, TicketStatusMetric $statusMetric): void
     {
-        if ($statusMetric->resolution_started_at) {
-            $startedAt = Carbon::parse($statusMetric->resolution_started_at);
-            $duration = $now->timestamp - $startedAt->timestamp;
-            
-            $statusMetric->resolution_total_seconds += max(0, $duration);
-            $statusMetric->resolution_started_at = null;
+        $endpoint = $ticket->closed_at ?: $ticket->resolved_at;
+        if (!$endpoint || !$ticket->fd_created_at) {
+            return;
         }
+
+        $createdAt = Carbon::parse($ticket->fd_created_at);
+        $endedAt = Carbon::parse($endpoint);
+        $statusMetric->resolution_total_seconds = max(0, $endedAt->timestamp - $createdAt->timestamp);
+        $statusMetric->resolution_started_at = null;
     }
 
     public function canonicalizeStatus(mixed $status): ?string

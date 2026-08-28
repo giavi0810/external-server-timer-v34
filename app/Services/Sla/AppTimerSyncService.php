@@ -281,6 +281,10 @@ class AppTimerSyncService
 
     protected function effectiveTtrUsed(Ticket $ticket, TicketTtrMetric $metric): int
     {
+        if ($ticket->resolved_at || $ticket->closed_at) {
+            return max(0, (int) $metric->used_seconds);
+        }
+
         $groupUsed = $ticket->groupMetrics
             ->whereNull('group_id')
             ->sum(fn (TicketGroupMetric $groupMetric) => $this->effectiveGroupUsed($groupMetric));
