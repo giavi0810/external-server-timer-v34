@@ -120,7 +120,11 @@ class StatusChangedHandler
         }
 
         if ($wasEnded && $isRunning) {
-            $this->handleEndToRun($ticket, $rtMetric, $statusMetric, $now);
+            $this->handleEndToRun($ticket, $statusMetric, $oldStatus, $now, $event);
+        }
+
+        if ($wasEnded && $isEnded && $oldStatus !== $newStatus) {
+            $this->handleEndToEnd($ticket, $statusMetric, $newStatus, $now);
         }
 
         $rtMetric->save();
@@ -165,18 +169,19 @@ class StatusChangedHandler
         TicketEvent $event
     ): void {
         $this->timerService->stopAllActiveGroupTimers($ticket, $now);
+        $isFirstEnd = !$ticket->resolved_at && !$ticket->closed_at;
 
         if (!$rtMetric->hasFirstResponse()) {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
             $rtMetric->status = 'ended_closed_no_reply';
         }
 
-        if ($newStatus === 'Resolved') {
-            $ticket->resolved_at = $now;
+        if ($isFirstEnd) {
+            $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
         }
-        $ticket->closed_at = $now;
 
-        $this->timerService->finalizeResolutionTime($statusMetric, $now);
+        $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
+        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
         $this->finalizeOpenStageOnTicketEnd($ticket, $now, $event);
     }
 
@@ -198,19 +203,6 @@ class StatusChangedHandler
             }
             if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
                 $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
-            }
-        } else {
-            $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
-            if ($groupLayer) {
-                $aggregateTimer = $ticket->getOrCreateGroupMetric($groupLayer, null);
-                $aggregateTimer->used_seconds = max(0, (int)$aggregateTimer->used_seconds + $waitingDuration);
-                $aggregateTimer->save();
-
-                if ($ticket->group_id) {
-                    $subTimer = $ticket->getOrCreateGroupMetric($groupLayer, $ticket->group_id);
-                    $subTimer->used_seconds = max(0, (int)$subTimer->used_seconds + $waitingDuration);
-                    $subTimer->save();
-                }
             }
         }
 
@@ -237,6 +229,7 @@ class StatusChangedHandler
     ): void {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $waitingDuration = $this->timerService->getLastWaitingDuration($statusMetric, $oldStatus, $now);
+        $isFirstEnd = !$ticket->resolved_at && !$ticket->closed_at;
 
         $this->timerService->accumulateWaitingTime($statusMetric, $oldStatus, $now);
 
@@ -247,76 +240,42 @@ class StatusChangedHandler
             if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
                 $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
             }
-        } else {
-            $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
-            if ($groupLayer) {
-                $aggregateTimer = $ticket->getOrCreateGroupMetric($groupLayer, null);
-                $aggregateTimer->used_seconds = max(0, (int)$aggregateTimer->used_seconds + $waitingDuration);
-                $aggregateTimer->save();
-
-                if ($ticket->group_id) {
-                    $subTimer = $ticket->getOrCreateGroupMetric($groupLayer, $ticket->group_id);
-                    $subTimer->used_seconds = max(0, (int)$subTimer->used_seconds + $waitingDuration);
-                    $subTimer->save();
-                }
-            }
         }
 
         if (!$rtMetric->hasFirstResponse()) {
             $rtMetric->status = 'ended_closed_no_reply';
         }
 
-        if ($newStatus === 'Resolved') {
-            $ticket->resolved_at = $now;
+        if ($isFirstEnd) {
+            $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
         }
-        $ticket->closed_at = $now;
 
-        $this->timerService->finalizeResolutionTime($statusMetric, $now);
+        $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
+        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
         $ttrMetric->save();
         $this->finalizeOpenStageOnTicketEnd($ticket, $now, $event);
     }
 
     protected function handleEndToRun(
         Ticket $ticket,
-        TicketFirstResponseMetric $rtMetric,
         TicketStatusMetric $statusMetric,
-        Carbon $now
+        string $oldStatus,
+        Carbon $now,
+        TicketEvent $event
     ): void {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $closedDuration = 0;
-        if ($ticket->closed_at) {
-            $closedDuration = abs($now->timestamp - Carbon::parse($ticket->closed_at)->timestamp);
+        $endStartedAt = $this->findCurrentEndStartedAt($ticket, $event)
+            ?? $this->fallbackEndStartedAt($ticket, $oldStatus);
+        if ($endStartedAt) {
+            $closedDuration = max(0, $now->timestamp - $endStartedAt->timestamp);
             $statusMetric->end_total_seconds += $closedDuration;
         }
 
-        $ticket->resolved_at = null;
-        $statusMetric->resolution_started_at = $now;
-
-        if ($ttrMetric->processing_mode === 'due-driven') {
-            $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
-            if ($groupLayer) {
-                $aggregateTimer = $ticket->getOrCreateGroupMetric($groupLayer, null);
-                $aggregateTimer->used_seconds = max(0, (int)$aggregateTimer->used_seconds + $closedDuration);
-                $aggregateTimer->save();
-
-                if ($ticket->group_id) {
-                    $subTimer = $ticket->getOrCreateGroupMetric($groupLayer, $ticket->group_id);
-                    $subTimer->used_seconds = max(0, (int)$subTimer->used_seconds + $closedDuration);
-                    $subTimer->save();
-                }
-            }
-        } else {
+        if ($ttrMetric->processing_mode !== 'due-driven') {
             if ($ttrMetric->latest_due_date_ttr) {
                 $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($closedDuration);
             }
-        }
-
-        if (!$rtMetric->hasFirstResponse()) {
-            if ($ttrMetric->processing_mode !== 'due-driven' && $rtMetric->latest_due_date_rt) {
-                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($closedDuration);
-            }
-            $rtMetric->status = 'running';
-            $rtMetric->started_at = $now;
         }
 
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
@@ -324,6 +283,72 @@ class StatusChangedHandler
             $this->timerService->startGroupTimer($ticket, $groupLayer, $now);
         }
         $ttrMetric->save();
+    }
+
+    protected function handleEndToEnd(
+        Ticket $ticket,
+        TicketStatusMetric $statusMetric,
+        string $newStatus,
+        Carbon $now
+    ): void {
+        $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
+        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
+    }
+
+    protected function findCurrentEndStartedAt(Ticket $ticket, TicketEvent $currentEvent): ?Carbon
+    {
+        $priorEvents = TicketEvent::query()
+            ->where('ticket_id', $ticket->ticket_id)
+            ->where('event_type', TicketEvent::EVENT_STATUS_CHANGED)
+            ->where(function ($query) use ($currentEvent) {
+                $query->where('event_timestamp', '<', $currentEvent->event_timestamp)
+                    ->orWhere(function ($sameTimestamp) use ($currentEvent) {
+                        $sameTimestamp->where('event_timestamp', $currentEvent->event_timestamp)
+                            ->where('id', '<', $currentEvent->id);
+                    });
+            })
+            ->orderByDesc('event_timestamp')
+            ->orderByDesc('id')
+            ->get();
+
+        foreach ($priorEvents as $priorEvent) {
+            $statusChange = collect($priorEvent->getFieldChanges())->firstWhere('field', 'status');
+            if (!$statusChange) {
+                continue;
+            }
+
+            $oldStatus = $this->timerService->canonicalizeStatus($statusChange['old_value'] ?? null);
+            $newStatus = $this->timerService->canonicalizeStatus($statusChange['new_value'] ?? null);
+
+            if (!$this->timerService->isEndStatus($oldStatus) && $this->timerService->isEndStatus($newStatus)) {
+                return Carbon::parse($priorEvent->event_timestamp);
+            }
+
+            // A previous End -> Run boundary means there is no matching open End interval further back.
+            if ($this->timerService->isEndStatus($oldStatus) && $this->timerService->isRunStatus($newStatus)) {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    protected function fallbackEndStartedAt(Ticket $ticket, string $oldStatus): ?Carbon
+    {
+        $fallback = $oldStatus === 'Closed' ? $ticket->closed_at : $ticket->resolved_at;
+
+        return $fallback ? Carbon::parse($fallback) : null;
+    }
+
+    protected function recordFirstEndTimestamp(Ticket $ticket, string $status, Carbon $at): void
+    {
+        if ($status === 'Resolved' && !$ticket->resolved_at) {
+            $ticket->resolved_at = $at;
+        }
+
+        if ($status === 'Closed' && !$ticket->closed_at) {
+            $ticket->closed_at = $at;
+        }
     }
 
     protected function handlePauseToPause(
