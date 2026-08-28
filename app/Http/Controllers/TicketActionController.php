@@ -32,6 +32,7 @@ class TicketActionController extends Controller
             'processing_phase' => 'nullable|string|max:255',
             'reason' => 'nullable|string|max:1000',
             'agent_name' => 'nullable|string|max:255',
+            'agent_id' => 'nullable|integer',
         ]);
 
         if ($validator->fails()) {
@@ -58,6 +59,7 @@ class TicketActionController extends Controller
                 'processing_phase' => $request->input('processing_phase'),
                 'reason' => $request->input('reason'),
                 'agent_name' => $request->input('agent_name'),
+                'agent_id' => $request->filled('agent_id') ? (int) $request->input('agent_id') : null,
             ];
             $clientKey = trim((string) $request->header('Idempotency-Key', ''));
             $businessIdentity = $clientKey !== ''
