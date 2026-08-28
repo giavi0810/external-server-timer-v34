@@ -4,6 +4,7 @@ namespace App\Services\Sla;
 
 use App\Models\TicketEvent;
 use App\Models\Ticket;
+use App\Models\FreshdeskOutboundOperation;
 use App\Models\SlaPolicy;
 use App\Models\TicketDueDateChange;
 use App\Models\TicketSlaStage;
@@ -197,6 +198,34 @@ class DueDateChangedHandler
             'metric_result' => $rt->first_response_at ? 'not_applicable' : 'pending',
         ]);
 
+        $agentId = (int) ($event->event_data['conversation_data']['actor_id'] ?? 0);
+        $agentName = (string) ($event->event_data['conversation_data']['actor_name'] ?? '');
+
+        if ($agentName === '' || $agentName === 'System') {
+            $recentOp = FreshdeskOutboundOperation::query()
+                ->where('ticket_id', $ticket->ticket_id)
+                ->where('operation_type', 'change_due_date')
+                ->where('created_at', '<=', $eventAt->copy()->addMinutes(10))
+                ->latest('created_at')
+                ->first()
+                ?? FreshdeskOutboundOperation::query()
+                    ->where('ticket_id', $ticket->ticket_id)
+                    ->where('operation_type', 'change_due_date')
+                    ->latest('created_at')
+                    ->first();
+
+            if ($recentOp && !empty($recentOp->payload['agent_name'])) {
+                $agentName = (string) $recentOp->payload['agent_name'];
+                if ($agentId === 0 && !empty($recentOp->payload['agent_id'])) {
+                    $agentId = (int) $recentOp->payload['agent_id'];
+                }
+            }
+        }
+
+        if ($agentName === '') {
+            $agentName = 'System';
+        }
+
         TicketDueDateChange::create([
             'ticket_id' => $ticket->ticket_id,
             'ticket_sla_stage_id' => $stage->id,
@@ -212,8 +241,8 @@ class DueDateChangedHandler
                 ['cf_change_due_reason']
             ) ?? 'unspecified',
             'reason_detail' => null,
-            'agent_id' => (int) ($event->event_data['conversation_data']['actor_id'] ?? 0),
-            'agent_name' => (string) ($event->event_data['conversation_data']['actor_name'] ?? 'System'),
+            'agent_id' => $agentId,
+            'agent_name' => $agentName,
             'submitted_at' => $eventAt,
         ]);
     }
