@@ -217,9 +217,9 @@ class AppTimerSyncService
         $ttrDiff = $ttrTotal - $ttrUsed;
 
         $fields = [
-            'cf_rt_time' => ($rtDiff < 0 ? '-' : '') . $this->formatDuration(abs($rtDiff)),
+            'cf_rt_time' => (string) $rtDiff,
             'cf_rt_overdue' => $rtOverdue ? 'Yes' : 'No',
-            'cf_ttr_time' => ($ttrDiff < 0 ? '-' : '') . $this->formatDuration(abs($ttrDiff)),
+            'cf_ttr_time' => (string) $ttrDiff,
             'cf_ttr_overdue' => $ttrOverdue ? 'Yes' : 'No',
             'cf_processing_mode' => $ttrMetric->processing_mode,
         ];
@@ -251,8 +251,8 @@ class AppTimerSyncService
             $used = $timer ? $this->effectiveGroupUsed($timer) : 0;
             $violated = $used > $total;
 
-            $fields["cf__{$prefix}_time_allowed"] = $this->formatDuration($total);
-            $fields["cf__{$prefix}_time_actual"] = $this->formatDuration($used);
+            $fields["cf__{$prefix}_time_allowed"] = (string) $total;
+            $fields["cf__{$prefix}_time_actual"] = (string) $used;
             $fields["cf__{$prefix}_violated"] = $violated ? 'Yes' : 'No';
         }
 
@@ -292,37 +292,4 @@ class AppTimerSyncService
         return max((int) $metric->used_seconds, (int) $groupUsed);
     }
 
-    protected function formatDuration(int $seconds): string
-    {
-        if ($seconds <= 0) {
-            return '0s';
-        }
-
-        $months = intdiv($seconds, 2419200);
-        $seconds %= 2419200;
-        $weeks = intdiv($seconds, 604800);
-        $seconds %= 604800;
-        $days = intdiv($seconds, 86400);
-        $seconds %= 86400;
-        $hours = intdiv($seconds, 3600);
-        $seconds %= 3600;
-        $minutes = intdiv($seconds, 60);
-        $secs = $seconds % 60;
-
-        $parts = [];
-        if ($months > 0)
-            $parts[] = "{$months}M";
-        if ($weeks > 0)
-            $parts[] = "{$weeks}w";
-        if ($days > 0)
-            $parts[] = "{$days}d";
-        if ($hours > 0)
-            $parts[] = "{$hours}h";
-        if ($minutes > 0)
-            $parts[] = "{$minutes}m";
-        if ($secs > 0)
-            $parts[] = "{$secs}s";
-
-        return implode(' ', $parts) ?: '0s';
-    }
 }
