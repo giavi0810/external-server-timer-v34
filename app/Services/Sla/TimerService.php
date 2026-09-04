@@ -3,15 +3,13 @@
 namespace App\Services\Sla;
 
 use App\Models\FreshdeskGroup;
-use App\Models\Ticket;
 use App\Models\SlaPolicy;
-use App\Models\TicketGroupMetric;
-use App\Models\TicketFirstResponseMetric;
-use App\Models\TicketStatusMetric;
+use App\Models\Ticket;
 use App\Models\TicketEvent;
+use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupSession;
+use App\Models\TicketStatusMetric;
 use App\Services\FreshdeskStatusNormalizer;
-use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 /**
@@ -23,12 +21,11 @@ class TimerService
 
     public function __construct(
         private readonly FreshdeskStatusNormalizer $statusNormalizer
-    ) {
-    }
+    ) {}
 
     public function startGroupTimer(Ticket $ticket, string $layer, ?Carbon $at = null): void
     {
-        if (!in_array($layer, self::TRACKED_GROUP_LAYERS, true)) {
+        if (! in_array($layer, self::TRACKED_GROUP_LAYERS, true)) {
             return;
         }
 
@@ -37,19 +34,19 @@ class TimerService
         $groupId = $ticket->group_id;
         if ($groupId) {
             $timer = $ticket->getOrCreateGroupMetric($layer, $groupId);
-            if (!$timer->started_at) {
+            if (! $timer->started_at) {
                 $timer->started_at = $now;
                 $timer->save();
             }
         }
 
         $aggregateTimer = $ticket->getOrCreateGroupMetric($layer, null);
-        if (!$aggregateTimer->started_at) {
+        if (! $aggregateTimer->started_at) {
             $aggregateTimer->started_at = $now;
             $aggregateTimer->save();
         }
 
-        if ($groupId && !TicketGroupSession::where('ticket_id', $ticket->ticket_id)->whereNull('to_time')->exists()) {
+        if ($groupId && ! TicketGroupSession::where('ticket_id', $ticket->ticket_id)->whereNull('to_time')->exists()) {
             $sourceEvent = $this->sourceEventAt($ticket, $now);
             if ($sourceEvent) {
                 TicketGroupSession::create([
@@ -75,7 +72,7 @@ class TimerService
                 $startedAt = Carbon::parse($timer->started_at);
                 $elapsed = $startedAt->diffInSeconds($now, false);
 
-                $timer->used_seconds = max(0, (int)$timer->used_seconds + max(0, $elapsed));
+                $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $elapsed));
                 $timer->started_at = null;
                 $timer->save();
             }
@@ -101,7 +98,7 @@ class TimerService
 
         foreach ($activeTimers as $timer) {
             $duration = Carbon::parse($timer->started_at)->diffInSeconds($now, false);
-            $timer->used_seconds = max(0, (int)$timer->used_seconds + max(0, $duration));
+            $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $duration));
             $timer->started_at = $now;
             $timer->save();
         }
@@ -124,12 +121,12 @@ class TimerService
             ->whereNull('to_time')
             ->latest('id')
             ->first();
-        if (!$session) {
+        if (! $session) {
             return;
         }
 
         $sourceEvent = $this->sourceEventAt($ticket, $at);
-        if (!$sourceEvent) {
+        if (! $sourceEvent) {
             return;
         }
 
@@ -149,7 +146,7 @@ class TimerService
             $startedAt = Carbon::parse($timer->started_at);
             $duration = $startedAt->diffInSeconds($now, false);
 
-            $timer->used_seconds = max(0, (int)$timer->used_seconds + max(0, $duration));
+            $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $duration));
             $timer->started_at = null;
             $timer->save();
         }
@@ -159,12 +156,14 @@ class TimerService
     {
         $layerConfig = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
 
-        if (!$layerConfig) return;
+        if (! $layerConfig) {
+            return;
+        }
 
         $normalizedOverrides = [];
         foreach ($layerBudgetOverrides as $layer => $seconds) {
             $normalizedLayer = strtoupper((string) $layer);
-            if (!in_array($normalizedLayer, self::TRACKED_GROUP_LAYERS, true)) {
+            if (! in_array($normalizedLayer, self::TRACKED_GROUP_LAYERS, true)) {
                 continue;
             }
             $normalizedOverrides[$normalizedLayer] = max(0, (int) $seconds);
@@ -172,18 +171,20 @@ class TimerService
 
         $timers = $ticket->groupMetrics()->get();
         foreach ($timers as $timer) {
-            if (!in_array($timer->layer, self::TRACKED_GROUP_LAYERS, true)) {
+            if (! in_array($timer->layer, self::TRACKED_GROUP_LAYERS, true)) {
                 continue;
             }
 
-            $budgetField = strtolower($timer->layer) . '_seconds';
+            $budgetField = strtolower($timer->layer).'_seconds';
             $budget = $normalizedOverrides[$timer->layer] ?? ($layerConfig->$budgetField ?? 0);
-            $safeUsed = max(0, (int)($timer->used_seconds ?? 0));
+            $safeUsed = max(0, (int) ($timer->used_seconds ?? 0));
 
-            if ($timer->group_id === null) continue;
+            if ($timer->group_id === null) {
+                continue;
+            }
 
-            $timer->total_seconds     = $budget;
-            $timer->used_seconds      = $safeUsed;
+            $timer->total_seconds = $budget;
+            $timer->used_seconds = $safeUsed;
             $timer->save();
         }
 
@@ -191,11 +192,11 @@ class TimerService
             $aggregateTimer = $ticket->getOrCreateGroupMetric($layer, null);
             $totalUsed = max(0, (int) ($aggregateTimer->used_seconds ?? 0));
 
-            $budgetField = strtolower($layer) . '_seconds';
+            $budgetField = strtolower($layer).'_seconds';
             $layerBudget = $normalizedOverrides[$layer] ?? ($layerConfig ? $layerConfig->$budgetField : 0);
 
-            $aggregateTimer->total_seconds     = $layerBudget;
-            $aggregateTimer->used_seconds      = $totalUsed;
+            $aggregateTimer->total_seconds = $layerBudget;
+            $aggregateTimer->used_seconds = $totalUsed;
             $aggregateTimer->save();
         }
 
@@ -223,16 +224,15 @@ class TimerService
         }
     }
 
-    public function recalculateRtMetrics(TicketFirstResponseMetric $rtMetric): void
-    {
-    }
+    public function recalculateRtMetrics(TicketFirstResponseMetric $rtMetric): void {}
 
     public function recalculateTtrMetrics(Ticket $ticket, TicketStatusMetric $statusMetric, Carbon $now): void
     {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
 
-        // TTR is immutable after the first Resolved/Closed checkpoint.
-        if ($ticket->resolved_at || $ticket->closed_at) {
+        // The current End cycle owns the stored checkpoint. A reopened ticket
+        // must resume calculation even though its historical timestamps remain.
+        if ($ticket->isEnded()) {
             return;
         }
 
@@ -248,12 +248,12 @@ class TimerService
         $ttrMetric->save();
     }
 
-    protected function calculateTtrUsedSeconds(
+    public function calculateTtrUsedSeconds(
         Ticket $ticket,
         TicketStatusMetric $statusMetric,
         Carbon $checkpointAt
     ): int {
-        if (!$ticket->fd_created_at) {
+        if (! $ticket->fd_created_at) {
             return 0;
         }
 
@@ -275,6 +275,7 @@ class TimerService
         if ($statusMetric->pending_started_at) {
             $excluded += max(0, $checkpointAt->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp);
         }
+
         return max(0, $elapsed - $excluded);
     }
 
@@ -304,20 +305,49 @@ class TimerService
         } elseif ($fromStatus === 'Pending' && $statusMetric->pending_started_at) {
             return $now->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp;
         }
+
         return 0;
     }
 
-    public function finalizeResolutionTime(Ticket $ticket, TicketStatusMetric $statusMetric): void
-    {
-        $endpoint = $ticket->closed_at ?: $ticket->resolved_at;
-        if (!$endpoint || !$ticket->fd_created_at) {
-            return;
+    public function finalizeResolutionTime(
+        Ticket $ticket,
+        TicketStatusMetric $statusMetric,
+        Carbon $endedAt
+    ): void {
+        $startedAt = $statusMetric->resolution_started_at
+            ? Carbon::parse($statusMetric->resolution_started_at)
+            : null;
+
+        // Backward-compatible recovery for an active first lifecycle whose
+        // status metric was created without its initial start marker.
+        if (! $startedAt
+            && (int) $statusMetric->resolution_total_seconds === 0
+            && $ticket->fd_created_at
+        ) {
+            $startedAt = Carbon::parse($ticket->fd_created_at);
         }
 
-        $createdAt = Carbon::parse($ticket->fd_created_at);
-        $endedAt = Carbon::parse($endpoint);
-        $statusMetric->resolution_total_seconds = max(0, $endedAt->timestamp - $createdAt->timestamp);
+        if ($startedAt) {
+            $statusMetric->resolution_total_seconds = max(
+                0,
+                (int) $statusMetric->resolution_total_seconds
+                    + max(0, $endedAt->timestamp - $startedAt->timestamp)
+            );
+        }
+
         $statusMetric->resolution_started_at = null;
+    }
+
+    public function addResolutionInterval(
+        TicketStatusMetric $statusMetric,
+        Carbon $startedAt,
+        Carbon $endedAt
+    ): void {
+        $statusMetric->resolution_total_seconds = max(
+            0,
+            (int) $statusMetric->resolution_total_seconds
+                + max(0, $endedAt->timestamp - $startedAt->timestamp)
+        );
     }
 
     public function canonicalizeStatus(mixed $status): ?string
@@ -398,7 +428,7 @@ class TimerService
             }
         }
 
-        if (!$resolvedName) {
+        if (! $resolvedName) {
             return null;
         }
 
@@ -409,6 +439,7 @@ class TimerService
                 $group->main_layer = $detected;
                 $group->save();
             }
+
             return $detected;
         }
 
@@ -422,7 +453,7 @@ class TimerService
 
     public function resolveGroupName(?string $groupId): ?string
     {
-        if (!$groupId) {
+        if (! $groupId) {
             return null;
         }
 
@@ -443,17 +474,25 @@ class TimerService
     {
         $name = strtolower($groupName);
 
-        if (str_contains($name, 'l1') || str_contains($name, 'layer 1')) return 'L1';
-        if (str_contains($name, 'l2') || str_contains($name, 'layer 2')) return 'L2';
-        if (str_contains($name, 'l3') || str_contains($name, 'layer 3')) return 'L3';
-        if (str_contains($name, 'l4') || str_contains($name, 'layer 4')) return 'L4';
+        if (str_contains($name, 'l1') || str_contains($name, 'layer 1')) {
+            return 'L1';
+        }
+        if (str_contains($name, 'l2') || str_contains($name, 'layer 2')) {
+            return 'L2';
+        }
+        if (str_contains($name, 'l3') || str_contains($name, 'layer 3')) {
+            return 'L3';
+        }
+        if (str_contains($name, 'l4') || str_contains($name, 'layer 4')) {
+            return 'L4';
+        }
 
         return null;
     }
 
     public function resolveGroupIdByGroupName(?string $groupName): ?string
     {
-        if (!$groupName) {
+        if (! $groupName) {
             return null;
         }
 
@@ -472,6 +511,7 @@ class TimerService
         $fallbackGroupId = $this->extractGroupIdFromFallbackName($groupName);
         if ($fallbackGroupId) {
             $groupById = FreshdeskGroup::where('group_id', $fallbackGroupId)->first();
+
             return $groupById ? $groupById->group_id : $fallbackGroupId;
         }
 
@@ -480,7 +520,7 @@ class TimerService
 
     protected function extractGroupIdFromFallbackName(?string $groupName): ?string
     {
-        if (!is_string($groupName) || trim($groupName) === '') {
+        if (! is_string($groupName) || trim($groupName) === '') {
             return null;
         }
 
