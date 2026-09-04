@@ -8,18 +8,24 @@ use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupMetric;
 use App\Models\TicketTtrMetric;
 use App\Services\FreshdeskApiService;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class AppTimerSyncService
 {
     protected FreshdeskApiService $freshdeskService;
+
     protected TimelineService $timelineService;
 
-    public function __construct(FreshdeskApiService $freshdeskService, TimelineService $timelineService)
-    {
+    protected TimerService $timerService;
+
+    public function __construct(
+        FreshdeskApiService $freshdeskService,
+        TimelineService $timelineService,
+        TimerService $timerService
+    ) {
         $this->freshdeskService = $freshdeskService;
         $this->timelineService = $timelineService;
+        $this->timerService = $timerService;
     }
 
     /**
@@ -47,7 +53,7 @@ class AppTimerSyncService
 
         $synced = $this->freshdeskService->updateTicket($ticket->ticket_id, $payload);
 
-        if (!$synced) {
+        if (! $synced) {
             $apiErrorContext = $this->freshdeskService->getLastErrorContext() ?? [];
             Log::error('SLA Timer sync to Freshdesk failed', array_merge([
                 'ticket_id' => $ticket->ticket_id,
@@ -59,13 +65,13 @@ class AppTimerSyncService
             $status = $apiErrorContext['status'] ?? null;
             $reasonDetail = $status !== null ? "{$reason}, status={$status}" : (string) $reason;
             $retryAfter = $apiErrorContext['retry_after'] ?? null;
-            $retryAfterStr = $retryAfter ? ", retry_after={$retryAfter}" : "";
+            $retryAfterStr = $retryAfter ? ", retry_after={$retryAfter}" : '';
             throw new \RuntimeException("Freshdesk sync failed for ticket {$ticket->ticket_id} (reason: {$reasonDetail}{$retryAfterStr})");
         }
 
         $ticket->touch();
 
-        Log::info("SLA Timer synced to Freshdesk", [
+        Log::info('SLA Timer synced to Freshdesk', [
             'ticket_id' => $ticket->ticket_id,
             'json_size' => strlen($jsonString),
         ]);
@@ -123,7 +129,7 @@ class AppTimerSyncService
                         'ls' => $st->started_at ? $st->started_at->toIso8601ZuluString() : null,
                     ];
                 }
-                $groupData[$alias . '_g'] = $subMap;
+                $groupData[$alias.'_g'] = $subMap;
             }
         }
 
@@ -199,21 +205,17 @@ class AppTimerSyncService
         $rtUsed = $this->effectiveRtUsed($rtMetric);
         $rtTotal = max(0, (int) $rtMetric->total_seconds);
         $rtOverdue = $rtUsed > $rtTotal
-            || (!$rtMetric->hasFirstResponse()
+            || (! $rtMetric->hasFirstResponse()
                 && $rtMetric->latest_due_date_rt
                 && now()->greaterThan($rtMetric->latest_due_date_rt));
         $rtDiff = $rtTotal - $rtUsed;
 
         $ttrUsed = $this->effectiveTtrUsed($ticket, $ttrMetric);
         $ttrTotal = max(0, (int) $ttrMetric->total_seconds);
-        $closedAfterDue = $ticket->closed_at
-            && $ttrMetric->latest_due_date_ttr
-            && $ticket->closed_at->greaterThan($ttrMetric->latest_due_date_ttr);
-        $openRunningAfterDue = !$ticket->closed_at
-            && $ticket->isRunning()
+        $runningAfterDue = $ticket->isRunning()
             && $ttrMetric->latest_due_date_ttr
             && now()->greaterThan($ttrMetric->latest_due_date_ttr);
-        $ttrOverdue = $ttrUsed > $ttrTotal || $closedAfterDue || $openRunningAfterDue;
+        $ttrOverdue = $ttrUsed > $ttrTotal || $runningAfterDue;
         $ttrDiff = $ttrTotal - $ttrUsed;
 
         $fields = [
@@ -240,7 +242,7 @@ class AppTimerSyncService
         if ($firstFailedMetric) {
             $failedMetric = $firstFailedMetric->metrics->first();
             $fields['cf_fail_time'] = $failedMetric->overdue_at->toIso8601ZuluString();
-            $fields['cf_fail_stage'] = 'Stage ' . $firstFailedMetric->sequence_number;
+            $fields['cf_fail_stage'] = 'Stage '.$firstFailedMetric->sequence_number;
             $fields['cf_fail_flow'] = $firstFailedMetric->processing_mode;
         }
 
@@ -281,15 +283,14 @@ class AppTimerSyncService
 
     protected function effectiveTtrUsed(Ticket $ticket, TicketTtrMetric $metric): int
     {
-        if ($ticket->resolved_at || $ticket->closed_at) {
+        if ($ticket->isEnded()) {
             return max(0, (int) $metric->used_seconds);
         }
 
-        $groupUsed = $ticket->groupMetrics
-            ->whereNull('group_id')
-            ->sum(fn (TicketGroupMetric $groupMetric) => $this->effectiveGroupUsed($groupMetric));
-
-        return max((int) $metric->used_seconds, (int) $groupUsed);
+        return $this->timerService->calculateTtrUsedSeconds(
+            $ticket,
+            $ticket->getOrCreateStatusMetric(),
+            now()
+        );
     }
-
 }

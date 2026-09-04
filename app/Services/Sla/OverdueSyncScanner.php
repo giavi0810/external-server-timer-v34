@@ -14,8 +14,7 @@ class OverdueSyncScanner
 {
     public function __construct(
         private readonly FreshdeskOutboundService $outboundService
-    ) {
-    }
+    ) {}
 
     /**
      * Enqueue at most $limit syncs for each SLA metric type.
@@ -48,7 +47,6 @@ class OverdueSyncScanner
             ->whereNotNull('latest_due_date_ttr')
             ->where('latest_due_date_ttr', '<', $at)
             ->whereHas('ticket', fn ($query) => $query
-                ->whereNull('closed_at')
                 ->whereIn('status', config('freshdesk.run_statuses', [])));
         $this->excludeAlreadyQueued(
             $query,
@@ -68,15 +66,14 @@ class OverdueSyncScanner
                     ->with('ticket')
                     ->lockForUpdate()
                     ->find($candidate->ticket_id);
-                if (!$metric || !$metric->ticket || !$metric->latest_due_date_ttr) {
+                if (! $metric || ! $metric->ticket || ! $metric->latest_due_date_ttr) {
                     return false;
                 }
 
                 $dueAt = Carbon::parse($metric->latest_due_date_ttr);
                 if (
-                    !$dueAt->lessThan($at)
-                    || $metric->ticket->closed_at
-                    || !$metric->ticket->isRunning()
+                    ! $dueAt->lessThan($at)
+                    || ! $metric->ticket->isRunning()
                 ) {
                     return false;
                 }
@@ -98,7 +95,6 @@ class OverdueSyncScanner
             ->whereNotNull('latest_due_date_rt')
             ->where('latest_due_date_rt', '<', $at)
             ->whereHas('ticket', fn ($query) => $query
-                ->whereNull('closed_at')
                 ->whereIn('status', config('freshdesk.run_statuses', [])));
         $this->excludeAlreadyQueued(
             $query,
@@ -118,17 +114,16 @@ class OverdueSyncScanner
                     ->with('ticket')
                     ->lockForUpdate()
                     ->find($candidate->ticket_id);
-                if (!$metric || !$metric->ticket || !$metric->latest_due_date_rt) {
+                if (! $metric || ! $metric->ticket || ! $metric->latest_due_date_rt) {
                     return false;
                 }
 
                 $dueAt = Carbon::parse($metric->latest_due_date_rt);
                 if (
-                    !$dueAt->lessThan($at)
+                    ! $dueAt->lessThan($at)
                     || $metric->status !== 'running'
                     || $metric->hasFirstResponse()
-                    || $metric->ticket->closed_at
-                    || !$metric->ticket->isRunning()
+                    || ! $metric->ticket->isRunning()
                 ) {
                     return false;
                 }

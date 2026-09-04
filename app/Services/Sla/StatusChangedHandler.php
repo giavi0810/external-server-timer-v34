@@ -2,12 +2,12 @@
 
 namespace App\Services\Sla;
 
-use App\Models\TicketEvent;
 use App\Models\Ticket;
+use App\Models\TicketEvent;
 use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketStatusMetric;
-use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * StatusChangedHandler — Xử lý sự kiện thay đổi trạng thái Ticket.
@@ -22,8 +22,11 @@ use Carbon\Carbon;
 class StatusChangedHandler
 {
     protected TimerService $timerService;
+
     protected SlaInitializationService $initService;
+
     protected TimelineService $timelineService;
+
     protected SlaStageService $stageService;
 
     public function __construct(
@@ -35,7 +38,7 @@ class StatusChangedHandler
         $this->timerService = $timerService;
         $this->initService = $initService;
         $this->timelineService = $timelineService;
-        $this->stageService = $stageService ?? new SlaStageService();
+        $this->stageService = $stageService ?? new SlaStageService;
     }
 
     public function handle(int $ticketId, array $ticketData, array $changes, TicketEvent $event): void
@@ -53,8 +56,9 @@ class StatusChangedHandler
 
         $statusChange = collect($changes)->firstWhere('field', 'status');
 
-        if (!$statusChange) {
-            Log::warning("StatusChangedHandler: Không tìm thấy thay đổi status trong mảng changes", ['ticket_id' => $ticketId]);
+        if (! $statusChange) {
+            Log::warning('StatusChangedHandler: Không tìm thấy thay đổi status trong mảng changes', ['ticket_id' => $ticketId]);
+
             return;
         }
 
@@ -124,7 +128,7 @@ class StatusChangedHandler
         }
 
         if ($wasEnded && $isEnded && $oldStatus !== $newStatus) {
-            $this->handleEndToEnd($ticket, $statusMetric, $newStatus, $now);
+            $this->handleEndToEnd($ticket, $statusMetric, $newStatus, $now, $event);
         }
 
         $rtMetric->save();
@@ -148,7 +152,7 @@ class StatusChangedHandler
     ): void {
         $this->timerService->stopAllActiveGroupTimers($ticket, $now);
 
-        if (!$rtMetric->hasFirstResponse() && $rtMetric->status === 'running') {
+        if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'running') {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
             $rtMetric->status = 'paused';
         }
@@ -169,19 +173,16 @@ class StatusChangedHandler
         TicketEvent $event
     ): void {
         $this->timerService->stopAllActiveGroupTimers($ticket, $now);
-        $isFirstEnd = !$ticket->resolved_at && !$ticket->closed_at;
-
-        if (!$rtMetric->hasFirstResponse()) {
+        if (! $rtMetric->hasFirstResponse()) {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
             $rtMetric->status = 'ended_closed_no_reply';
         }
 
-        if ($isFirstEnd) {
-            $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
-        }
+        // Every Run -> End transition is the first End checkpoint of a new cycle.
+        $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
 
         $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
-        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
+        $this->timerService->finalizeResolutionTime($ticket, $statusMetric, $now);
         $this->finalizeOpenStageOnTicketEnd($ticket, $now, $event);
     }
 
@@ -201,12 +202,12 @@ class StatusChangedHandler
             if ($ttrMetric->latest_due_date_ttr) {
                 $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+            if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
                 $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
             }
         }
 
-        if (!$rtMetric->hasFirstResponse() && $rtMetric->status === 'paused') {
+        if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'paused') {
             $rtMetric->status = 'running';
             $rtMetric->started_at = $now;
         }
@@ -229,29 +230,26 @@ class StatusChangedHandler
     ): void {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $waitingDuration = $this->timerService->getLastWaitingDuration($statusMetric, $oldStatus, $now);
-        $isFirstEnd = !$ticket->resolved_at && !$ticket->closed_at;
-
         $this->timerService->accumulateWaitingTime($statusMetric, $oldStatus, $now);
 
         if ($ttrMetric->processing_mode !== 'due-driven') {
             if ($ttrMetric->latest_due_date_ttr) {
                 $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (!$rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+            if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
                 $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
             }
         }
 
-        if (!$rtMetric->hasFirstResponse()) {
+        if (! $rtMetric->hasFirstResponse()) {
             $rtMetric->status = 'ended_closed_no_reply';
         }
 
-        if ($isFirstEnd) {
-            $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
-        }
+        // Every Pause -> End transition is the first End checkpoint of a new cycle.
+        $this->timerService->finalizeTtrUsedTime($ticket, $statusMetric, $now);
 
         $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
-        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
+        $this->timerService->finalizeResolutionTime($ticket, $statusMetric, $now);
         $ttrMetric->save();
         $this->finalizeOpenStageOnTicketEnd($ticket, $now, $event);
     }
@@ -264,13 +262,25 @@ class StatusChangedHandler
         TicketEvent $event
     ): void {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
-        $closedDuration = 0;
-        $endStartedAt = $this->findCurrentEndStartedAt($ticket, $event)
+        $endCycle = $this->findCurrentEndCycle($ticket, $event);
+        $endStartedAt = $endCycle['started_at']
             ?? $this->fallbackEndStartedAt($ticket, $oldStatus);
+        $closedDuration = 0;
         if ($endStartedAt) {
             $closedDuration = max(0, $now->timestamp - $endStartedAt->timestamp);
             $statusMetric->end_total_seconds += $closedDuration;
         }
+
+        if ($ttrMetric->processing_mode === 'due-driven' && $endStartedAt) {
+            // Resolution already includes first End -> first Closed when Closed
+            // follows Resolved. Continue only from the last accounted endpoint.
+            $resolutionResumeAt = $endCycle['first_closed_at'] ?? $endStartedAt;
+            $this->timerService->addResolutionInterval($statusMetric, $resolutionResumeAt, $now);
+        }
+
+        // Resolution runs continuously in every non-End status, including
+        // Waiting/Pending. Reopen starts the active segment of the next cycle.
+        $statusMetric->resolution_started_at = $now;
 
         if ($ttrMetric->processing_mode !== 'due-driven') {
             if ($ttrMetric->latest_due_date_ttr) {
@@ -278,24 +288,40 @@ class StatusChangedHandler
             }
         }
 
+        $ttrMetric->save();
+        $this->timerService->recalculateTtrMetrics($ticket, $statusMetric, $now);
+
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
         if ($groupLayer) {
             $this->timerService->startGroupTimer($ticket, $groupLayer, $now);
         }
-        $ttrMetric->save();
     }
 
     protected function handleEndToEnd(
         Ticket $ticket,
         TicketStatusMetric $statusMetric,
         string $newStatus,
-        Carbon $now
+        Carbon $now,
+        TicketEvent $event
     ): void {
+        $endCycle = $this->findCurrentEndCycle($ticket, $event);
+
+        // TTR remains fixed at the first End of this cycle. Resolution gives
+        // Closed precedence, therefore Resolved -> first Closed is included.
+        if ($newStatus === 'Closed'
+            && $endCycle['started_at']
+            && ! $endCycle['first_closed_at']
+        ) {
+            $this->timerService->addResolutionInterval($statusMetric, $endCycle['started_at'], $now);
+        }
+
         $this->recordFirstEndTimestamp($ticket, $newStatus, $now);
-        $this->timerService->finalizeResolutionTime($ticket, $statusMetric);
     }
 
-    protected function findCurrentEndStartedAt(Ticket $ticket, TicketEvent $currentEvent): ?Carbon
+    /**
+     * @return array{started_at: ?Carbon, first_closed_at: ?Carbon}
+     */
+    protected function findCurrentEndCycle(Ticket $ticket, TicketEvent $currentEvent): array
     {
         $priorEvents = TicketEvent::query()
             ->where('ticket_id', $ticket->ticket_id)
@@ -309,19 +335,30 @@ class StatusChangedHandler
             })
             ->orderByDesc('event_timestamp')
             ->orderByDesc('id')
-            ->get();
+            ->cursor(['id', 'field_changes', 'event_timestamp']);
+
+        $firstClosedAt = null;
 
         foreach ($priorEvents as $priorEvent) {
             $statusChange = collect($priorEvent->getFieldChanges())->firstWhere('field', 'status');
-            if (!$statusChange) {
+            if (! $statusChange) {
                 continue;
             }
 
             $oldStatus = $this->timerService->canonicalizeStatus($statusChange['old_value'] ?? null);
             $newStatus = $this->timerService->canonicalizeStatus($statusChange['new_value'] ?? null);
 
-            if (!$this->timerService->isEndStatus($oldStatus) && $this->timerService->isEndStatus($newStatus)) {
-                return Carbon::parse($priorEvent->event_timestamp);
+            if ($newStatus === 'Closed') {
+                // Iteration is newest-first, so overwrite until reaching the
+                // oldest (first) Closed inside this End cycle.
+                $firstClosedAt = Carbon::parse($priorEvent->event_timestamp);
+            }
+
+            if (! $this->timerService->isEndStatus($oldStatus) && $this->timerService->isEndStatus($newStatus)) {
+                return [
+                    'started_at' => Carbon::parse($priorEvent->event_timestamp),
+                    'first_closed_at' => $firstClosedAt,
+                ];
             }
 
             // A previous End -> Run boundary means there is no matching open End interval further back.
@@ -330,7 +367,10 @@ class StatusChangedHandler
             }
         }
 
-        return null;
+        return [
+            'started_at' => null,
+            'first_closed_at' => null,
+        ];
     }
 
     protected function fallbackEndStartedAt(Ticket $ticket, string $oldStatus): ?Carbon
@@ -342,11 +382,11 @@ class StatusChangedHandler
 
     protected function recordFirstEndTimestamp(Ticket $ticket, string $status, Carbon $at): void
     {
-        if ($status === 'Resolved' && !$ticket->resolved_at) {
+        if ($status === 'Resolved' && ! $ticket->resolved_at) {
             $ticket->resolved_at = $at;
         }
 
-        if ($status === 'Closed' && !$ticket->closed_at) {
+        if ($status === 'Closed' && ! $ticket->closed_at) {
             $ticket->closed_at = $at;
         }
     }
