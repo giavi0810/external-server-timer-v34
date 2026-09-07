@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -128,6 +129,19 @@ class TicketEvent extends Model
     public function getFieldChanges(): array
     {
         return $this->field_changes ?? [];
+    }
+
+    public function occurredAt(): Carbon
+    {
+        $timestamp = $this->event_timestamp
+            ?? data_get($this->event_data, 'conversation_data.updated_at')
+            ?? data_get($this->event_data, 'ticket_data.updated_at');
+
+        if (! $timestamp) {
+            throw new \LogicException("Ticket event {$this->getKey()} has no occurrence timestamp.");
+        }
+
+        return Carbon::parse($timestamp);
     }
 
     public static function isSupportedType(string $eventType): bool

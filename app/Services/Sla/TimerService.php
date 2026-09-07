@@ -23,7 +23,12 @@ class TimerService
         private readonly FreshdeskStatusNormalizer $statusNormalizer
     ) {}
 
-    public function startGroupTimer(Ticket $ticket, string $layer, ?Carbon $at = null): void
+    public function startGroupTimer(
+        Ticket $ticket,
+        string $layer,
+        ?Carbon $at = null,
+        ?TicketEvent $sourceEvent = null
+    ): void
     {
         if (! in_array($layer, self::TRACKED_GROUP_LAYERS, true)) {
             return;
@@ -47,7 +52,7 @@ class TimerService
         }
 
         if ($groupId && ! TicketGroupSession::where('ticket_id', $ticket->ticket_id)->whereNull('to_time')->exists()) {
-            $sourceEvent = $this->sourceEventAt($ticket, $now);
+            $sourceEvent ??= $this->sourceEventAt($ticket, $now);
             if ($sourceEvent) {
                 TicketGroupSession::create([
                     'ticket_id' => $ticket->ticket_id,
@@ -61,8 +66,12 @@ class TimerService
         }
     }
 
-    public function stopGroupTimer(Ticket $ticket, string $layer, ?Carbon $at = null): void
-    {
+    public function stopGroupTimer(
+        Ticket $ticket,
+        string $layer,
+        ?Carbon $at = null,
+        ?TicketEvent $sourceEvent = null
+    ): void {
         $now = $at ?? now();
 
         $groupId = $ticket->group_id;
@@ -70,7 +79,7 @@ class TimerService
             $timer = $ticket->getOrCreateGroupMetric($layer, $groupId);
             if ($timer->started_at) {
                 $startedAt = Carbon::parse($timer->started_at);
-                $elapsed = $startedAt->diffInSeconds($now, false);
+                $elapsed = $now->timestamp - $startedAt->timestamp;
 
                 $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $elapsed));
                 $timer->started_at = null;
@@ -81,13 +90,13 @@ class TimerService
         $aggregateTimer = $ticket->getOrCreateGroupMetric($layer, null);
         if ($aggregateTimer->started_at) {
             $startedAt = Carbon::parse($aggregateTimer->started_at);
-            $elapsed = $startedAt->diffInSeconds($now, false);
+            $elapsed = $now->timestamp - $startedAt->timestamp;
             $aggregateTimer->used_seconds = max(0, (int) $aggregateTimer->used_seconds + max(0, $elapsed));
             $aggregateTimer->started_at = null;
             $aggregateTimer->save();
         }
 
-        $this->closeOpenGroupSession($ticket, $now);
+        $this->closeOpenGroupSession($ticket, $now, $sourceEvent);
     }
 
     public function accumulateGroupUsedTime(Ticket $ticket, Carbon $now): void
@@ -97,13 +106,12 @@ class TimerService
             ->get();
 
         foreach ($activeTimers as $timer) {
-            $duration = Carbon::parse($timer->started_at)->diffInSeconds($now, false);
+            $duration = $now->timestamp - Carbon::parse($timer->started_at)->timestamp;
             $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $duration));
             $timer->started_at = $now;
             $timer->save();
         }
 
-        $this->closeOpenGroupSession($ticket, $now);
     }
 
     protected function sourceEventAt(Ticket $ticket, Carbon $at): ?TicketEvent
@@ -115,7 +123,11 @@ class TimerService
             ->first();
     }
 
-    protected function closeOpenGroupSession(Ticket $ticket, Carbon $at): void
+    protected function closeOpenGroupSession(
+        Ticket $ticket,
+        Carbon $at,
+        ?TicketEvent $sourceEvent = null
+    ): void
     {
         $session = TicketGroupSession::where('ticket_id', $ticket->ticket_id)
             ->whereNull('to_time')
@@ -125,7 +137,17 @@ class TimerService
             return;
         }
 
-        $sourceEvent = $this->sourceEventAt($ticket, $at);
+        $fromTime = Carbon::parse($session->from_time);
+        if ($at->lessThan($fromTime)) {
+            throw new \LogicException(sprintf(
+                'Cannot close ticket group session %d at %s before it starts at %s.',
+                $session->id,
+                $at->toIso8601String(),
+                $fromTime->toIso8601String()
+            ));
+        }
+
+        $sourceEvent ??= $this->sourceEventAt($ticket, $at);
         if (! $sourceEvent) {
             return;
         }
@@ -136,20 +158,25 @@ class TimerService
         ]);
     }
 
-    public function stopAllActiveGroupTimers(Ticket $ticket, Carbon $now): void
-    {
+    public function stopAllActiveGroupTimers(
+        Ticket $ticket,
+        Carbon $now,
+        ?TicketEvent $sourceEvent = null
+    ): void {
         $activeTimers = $ticket->groupMetrics()
             ->whereNotNull('started_at')
             ->get();
 
         foreach ($activeTimers as $timer) {
             $startedAt = Carbon::parse($timer->started_at);
-            $duration = $startedAt->diffInSeconds($now, false);
+            $duration = $now->timestamp - $startedAt->timestamp;
 
             $timer->used_seconds = max(0, (int) $timer->used_seconds + max(0, $duration));
             $timer->started_at = null;
             $timer->save();
         }
+
+        $this->closeOpenGroupSession($ticket, $now, $sourceEvent);
     }
 
     public function recalculateGroupMetrics(Ticket $ticket, array $layerBudgetOverrides = [], ?Carbon $now = null): void

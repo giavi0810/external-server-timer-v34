@@ -71,7 +71,7 @@ class TicketCreatedHandler
 
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id, $ticketData['group_name'] ?? null);
         if ($groupLayer) {
-            $this->timerService->startGroupTimer($ticket, $groupLayer, $initialTimestamp);
+            $this->timerService->startGroupTimer($ticket, $groupLayer, $initialTimestamp, $event);
         }
 
         Log::info("TicketCreatedHandler Audit Log", [

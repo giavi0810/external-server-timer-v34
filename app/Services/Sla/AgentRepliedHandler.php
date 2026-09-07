@@ -28,21 +28,12 @@ class AgentRepliedHandler
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
 
-        $now = now();
-
         $eventData = $event->event_data ?? [];
         $convData = $eventData['conversation_data'] ?? [];
-        
-        $updatedAtRaw = $convData['updated_at'] 
-                        ?? $eventData['ticket_data']['updated_at'] 
-                        ?? null;
+        $now = $event->occurredAt();
         
         $actorId = $convData['actor_id'] ?? null;
         $actorLabel = $actorId ? (string)$actorId : null;
-
-        if ($updatedAtRaw) {
-            $now = \Carbon\Carbon::parse($updatedAtRaw);
-        }
 
         $actorType = $convData['actor_type'] ?? null;
         if ($actorType && !in_array($actorType, ['agent'])) {

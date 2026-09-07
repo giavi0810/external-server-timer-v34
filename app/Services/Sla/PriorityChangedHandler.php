@@ -295,9 +295,6 @@ class PriorityChangedHandler
 
     private function resolveChangedAt(TicketEvent $event): Carbon
     {
-        $timestamp = $event->event_timestamp
-            ?? ($event->event_data['ticket_data']['updated_at'] ?? null);
-
-        return $timestamp ? Carbon::parse($timestamp) : now();
+        return $event->occurredAt();
     }
 }

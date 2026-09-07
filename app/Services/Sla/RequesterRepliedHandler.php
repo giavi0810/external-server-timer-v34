@@ -4,7 +4,6 @@ namespace App\Services\Sla;
 
 use App\Models\Ticket;
 use App\Models\TicketEvent;
-use Carbon\Carbon;
 
 class RequesterRepliedHandler
 {
@@ -18,11 +17,7 @@ class RequesterRepliedHandler
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
         $eventData = $event->event_data ?? [];
         $conversation = $eventData['conversation_data'] ?? [];
-        $occurredAt = Carbon::parse(
-            $conversation['updated_at']
-                ?? $eventData['ticket_data']['updated_at']
-                ?? $event->event_timestamp
-        );
+        $occurredAt = $event->occurredAt();
         $actorId = $conversation['actor_id'] ?? null;
 
         $this->timelineService->appendTicketEventLog(

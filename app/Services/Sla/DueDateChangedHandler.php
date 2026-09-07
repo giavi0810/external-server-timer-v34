@@ -52,7 +52,7 @@ class DueDateChangedHandler
     {
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
 
-        $eventAt = $event->event_timestamp ? Carbon::parse($event->event_timestamp) : now();
+        $eventAt = $event->occurredAt();
         $this->initService->ensureSlaInitialized($ticket);
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
@@ -262,7 +262,7 @@ class DueDateChangedHandler
         if (!$config) return;
 
         if ($ttrMetric->processing_mode === 'due-driven' && $oldDue) {
-            $diffSeconds = $oldDue->diffInSeconds($newDue, false);
+            $diffSeconds = $newDue->timestamp - $oldDue->timestamp;
             $oldTotal = (int) $ttrMetric->total_seconds;
             $ttrMetric->total_seconds = max(0, $oldTotal + $diffSeconds);
             
@@ -277,7 +277,7 @@ class DueDateChangedHandler
             $statusMetric = $ticket->getOrCreateStatusMetric();
             $pauseTime = (int) $statusMetric->waiting_total_seconds + (int) $statusMetric->pending_total_seconds + (int) $statusMetric->end_total_seconds;
             
-            $ttrMetric->total_seconds = max(0, $createdAt->diffInSeconds($newDue, false) - $pauseTime);
+            $ttrMetric->total_seconds = max(0, $newDue->timestamp - $createdAt->timestamp - $pauseTime);
         }
 
         $ttrMetric->save();

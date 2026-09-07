@@ -31,10 +31,10 @@ class SlaStageService
         $statusMetric = $ticket->getOrCreateStatusMetric();
         $pauseSeconds = (int) (($statusMetric->waiting_total_seconds ?? 0) + ($statusMetric->pending_total_seconds ?? 0));
         if ($statusMetric->waiting_started_at && $checkpointAt->greaterThan($statusMetric->waiting_started_at)) {
-            $pauseSeconds += $checkpointAt->diffInSeconds($statusMetric->waiting_started_at);
+            $pauseSeconds += $checkpointAt->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp;
         }
         if ($statusMetric->pending_started_at && $checkpointAt->greaterThan($statusMetric->pending_started_at)) {
-            $pauseSeconds += $checkpointAt->diffInSeconds($statusMetric->pending_started_at);
+            $pauseSeconds += $checkpointAt->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp;
         }
 
         $isDueDriven = $stage->processing_mode === 'due-driven';
