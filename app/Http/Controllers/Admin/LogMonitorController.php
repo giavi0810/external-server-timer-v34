@@ -194,18 +194,20 @@ class LogMonitorController extends Controller
             $fileLabels[$file] = $this->logDisplayName($file);
         }
 
-        $defaultFile = ! empty($files) ? $files[0] : 'laravel.log';
+        $defaultFile = $files[0] ?? null;
         $selectedFile = $request->input('file', $defaultFile);
         $hours = (int) $request->input('hours', 6);
 
-        if (! in_array($selectedFile, $files, true) && ! empty($files)) {
-            $selectedFile = $files[0];
+        if (! is_string($selectedFile) || ! in_array($selectedFile, $files, true)) {
+            $selectedFile = $defaultFile;
         }
 
         $logContent = [];
-        $fullPath = $logPath.DIRECTORY_SEPARATOR.$selectedFile;
+        $fullPath = $selectedFile !== null
+            ? $logPath.DIRECTORY_SEPARATOR.$selectedFile
+            : null;
 
-        if (File::exists($fullPath)) {
+        if ($fullPath !== null && File::isFile($fullPath)) {
             $fileSize = filesize($fullPath);
             $rawLines = [];
 
