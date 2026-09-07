@@ -3,7 +3,6 @@
 namespace App\Services\Sla;
 
 use App\Models\TicketFirstResponseMetric;
-use App\Models\TicketTtrMetric;
 use App\Services\Queue\FreshdeskOutboundService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -43,48 +42,9 @@ class OverdueSyncScanner
 
     private function scanTtr(Carbon $at, int $limit): int
     {
-        $query = TicketTtrMetric::query()
-            ->whereNotNull('latest_due_date_ttr')
-            ->where('latest_due_date_ttr', '<', $at)
-            ->whereHas('ticket', fn ($query) => $query
-                ->whereIn('status', config('freshdesk.run_statuses', [])));
-        $this->excludeAlreadyQueued(
-            $query,
-            'ticket_ttr_metrics',
-            'latest_due_date_ttr',
-            'ttr'
-        );
-        $metrics = $query
-            ->orderBy('latest_due_date_ttr')
-            ->limit($limit)
-            ->get();
-
-        $dispatched = 0;
-        foreach ($metrics as $candidate) {
-            $didDispatch = DB::transaction(function () use ($candidate, $at): bool {
-                $metric = TicketTtrMetric::query()
-                    ->with('ticket')
-                    ->lockForUpdate()
-                    ->find($candidate->ticket_id);
-                if (! $metric || ! $metric->ticket || ! $metric->latest_due_date_ttr) {
-                    return false;
-                }
-
-                $dueAt = Carbon::parse($metric->latest_due_date_ttr);
-                if (
-                    ! $dueAt->lessThan($at)
-                    || ! $metric->ticket->isRunning()
-                ) {
-                    return false;
-                }
-
-                return $this->enqueueSync($metric->ticket_id, 'ttr', $dueAt);
-            });
-
-            $dispatched += $didDispatch ? 1 : 0;
-        }
-
-        return $dispatched;
+        // Per BR-EVL-02, TTR evaluation is performed solely when a ticket enters
+        // an End status (Resolved or Closed). Running tickets are not marked overdue midway.
+        return 0;
     }
 
     private function scanFirstResponse(Carbon $at, int $limit): int
