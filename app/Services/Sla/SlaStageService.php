@@ -63,9 +63,9 @@ class SlaStageService
                 $failed = $dueAt && $evaluationAt->greaterThan($dueAt);
             } else {
                 // Tuân thủ BR-EVL-01 (CAL-STAGE-RESULT & CAL-RT-RESULT):
-                // 1. Quá hạn ngân sách SLA: used_seconds >= effective_sla
+                // 1. Quá hạn ngân sách SLA: used_seconds > effective_sla (used = goal thì chưa overdue)
                 // 2. HOẶC quá hạn thời gian lịch sau khi đã bù thời gian Pause: evaluationAt > effectiveDueAt
-                $exceededSla = $effectiveSla > 0 && $usedSeconds >= $effectiveSla;
+                $exceededSla = $effectiveSla > 0 && $usedSeconds > $effectiveSla;
                 $exceededDue = $effectiveDueAt && $evaluationAt->greaterThan($effectiveDueAt);
 
                 $failed = $exceededSla || $exceededDue;
