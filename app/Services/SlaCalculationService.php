@@ -254,7 +254,7 @@ class SlaCalculationService
         ) {
             $startedAt = Carbon::parse($rtMetric->started_at);
             if ($eventAt->greaterThan($startedAt)) {
-                $elapsed = $startedAt->diffInSeconds($eventAt);
+                $elapsed = $eventAt->timestamp - $startedAt->timestamp;
                 $rtMetric->used_seconds += max(0, $elapsed);
                 $timerService->recalculateRtMetrics($rtMetric);
                 $rtMetric->started_at = $eventAt;
@@ -312,6 +312,9 @@ class SlaCalculationService
         }
 
         if ($changed) {
+            $sourceEvent = $startedAt->equalTo($eventAt) ? $event : null;
+            $timerService->startGroupTimer($ticket, $groupLayer, $startedAt, $sourceEvent);
+
             Log::info('SlaCalculationService: bootstrapped missing running group timer', [
                 'ticket_id' => $ticket->ticket_id,
                 'group_id' => $ticket->group_id,
@@ -371,20 +374,6 @@ class SlaCalculationService
 
     protected function resolveTicketEventTimestamp(TicketEvent $event): Carbon
     {
-        if ($event->event_timestamp) {
-            return Carbon::parse($event->event_timestamp);
-        }
-
-        $updatedAtRaw = $event->event_data['ticket_data']['updated_at'] ?? null;
-
-        if (!$updatedAtRaw && isset($event->event_data['conversation_data']['updated_at'])) {
-            $updatedAtRaw = $event->event_data['conversation_data']['updated_at'];
-        }
-
-        if ($updatedAtRaw) {
-            return Carbon::parse($updatedAtRaw);
-        }
-
-        return now();
+        return $event->occurredAt();
     }
 }

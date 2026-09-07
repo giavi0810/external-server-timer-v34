@@ -5,7 +5,6 @@ namespace App\Services\Sla;
 use App\Models\TicketEvent;
 use App\Models\Ticket;
 use App\Services\FreshdeskApiService;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -44,13 +43,7 @@ class GroupChangedHandler
     {
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
 
-        $timestamp = !empty($event->event_data['ticket_data']['updated_at'])
-            ? Carbon::parse($event->event_data['ticket_data']['updated_at'])
-            : (
-                $event->event_timestamp
-                    ? Carbon::parse($event->event_timestamp)
-                    : now()
-            );
+        $timestamp = $event->occurredAt();
 
         $this->initService->ensureSlaInitialized($ticket, $timestamp);
 
@@ -90,14 +83,14 @@ class GroupChangedHandler
             'event_at'         => $timestamp->toIso8601String(),
         ]);
 
-        $this->timerService->stopAllActiveGroupTimers($ticket, $timestamp);
+        $this->timerService->stopAllActiveGroupTimers($ticket, $timestamp, $event);
 
         if ($newGroupId) {
             $ticket->group_id = $newGroupId;
         }
 
         if ($newLayer && $this->timerService->isRunStatus($ticket->status)) {
-            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp);
+            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp, $event);
         }
 
         $this->timerService->recalculateGroupMetrics($ticket, [], $timestamp);

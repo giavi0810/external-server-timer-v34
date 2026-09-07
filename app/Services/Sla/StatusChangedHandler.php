@@ -45,14 +45,9 @@ class StatusChangedHandler
     {
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
 
-        $eventUpdatedAt = null;
-        $eventData = $event->event_data ?? [];
-        $updatedAtRaw = $eventData['ticket_data']['updated_at'] ?? null;
-        if ($updatedAtRaw) {
-            $eventUpdatedAt = Carbon::parse($updatedAtRaw);
-        }
+        $eventAt = $event->occurredAt();
 
-        $this->initService->ensureSlaInitialized($ticket, $eventUpdatedAt);
+        $this->initService->ensureSlaInitialized($ticket, $eventAt);
 
         $statusChange = collect($changes)->firstWhere('field', 'status');
 
@@ -73,7 +68,7 @@ class StatusChangedHandler
 
         $ticket->status = $newStatus;
 
-        $this->recalculateSlaOnStatusChange($ticket, $oldStatus, $newStatus, $eventUpdatedAt, $event);
+        $this->recalculateSlaOnStatusChange($ticket, $oldStatus, $newStatus, $eventAt, $event);
 
         $ticket->save();
 
@@ -89,9 +84,9 @@ class StatusChangedHandler
         }
     }
 
-    protected function recalculateSlaOnStatusChange(Ticket $ticket, string $oldStatus, string $newStatus, ?Carbon $eventUpdatedAt, TicketEvent $event): void
+    protected function recalculateSlaOnStatusChange(Ticket $ticket, string $oldStatus, string $newStatus, Carbon $eventAt, TicketEvent $event): void
     {
-        $now = $eventUpdatedAt ?? now();
+        $now = $eventAt;
 
         $wasRunning = $this->timerService->isRunStatus($oldStatus);
         $wasPaused = $this->timerService->isPauseStatus($oldStatus);
@@ -112,7 +107,7 @@ class StatusChangedHandler
         }
 
         if ($wasPaused && $isRunning) {
-            $this->handlePauseToRun($ticket, $rtMetric, $statusMetric, $oldStatus, $now);
+            $this->handlePauseToRun($ticket, $rtMetric, $statusMetric, $oldStatus, $now, $event);
         }
 
         if ($wasPaused && $isEnded) {
@@ -150,7 +145,7 @@ class StatusChangedHandler
         Carbon $now,
         TicketEvent $event
     ): void {
-        $this->timerService->stopAllActiveGroupTimers($ticket, $now);
+        $this->timerService->stopAllActiveGroupTimers($ticket, $now, $event);
 
         if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'running') {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
@@ -172,7 +167,7 @@ class StatusChangedHandler
         Carbon $now,
         TicketEvent $event
     ): void {
-        $this->timerService->stopAllActiveGroupTimers($ticket, $now);
+        $this->timerService->stopAllActiveGroupTimers($ticket, $now, $event);
         if (! $rtMetric->hasFirstResponse()) {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
             $rtMetric->status = 'ended_closed_no_reply';
@@ -191,7 +186,8 @@ class StatusChangedHandler
         TicketFirstResponseMetric $rtMetric,
         TicketStatusMetric $statusMetric,
         string $oldStatus,
-        Carbon $now
+        Carbon $now,
+        TicketEvent $event
     ): void {
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $waitingDuration = $this->timerService->getLastWaitingDuration($statusMetric, $oldStatus, $now);
@@ -214,7 +210,7 @@ class StatusChangedHandler
 
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
         if ($groupLayer) {
-            $this->timerService->startGroupTimer($ticket, $groupLayer, $now);
+            $this->timerService->startGroupTimer($ticket, $groupLayer, $now, $event);
         }
         $ttrMetric->save();
     }
@@ -293,7 +289,7 @@ class StatusChangedHandler
 
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
         if ($groupLayer) {
-            $this->timerService->startGroupTimer($ticket, $groupLayer, $now);
+            $this->timerService->startGroupTimer($ticket, $groupLayer, $now, $event);
         }
     }
 
