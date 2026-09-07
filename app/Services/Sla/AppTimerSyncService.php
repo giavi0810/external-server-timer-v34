@@ -8,6 +8,7 @@ use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupMetric;
 use App\Models\TicketTtrMetric;
 use App\Services\FreshdeskApiService;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class AppTimerSyncService
@@ -212,10 +213,29 @@ class AppTimerSyncService
 
         $ttrUsed = $this->effectiveTtrUsed($ticket, $ttrMetric);
         $ttrTotal = max(0, (int) $ttrMetric->total_seconds);
-        $runningAfterDue = $ticket->isRunning()
-            && $ttrMetric->latest_due_date_ttr
-            && now()->greaterThan($ttrMetric->latest_due_date_ttr);
-        $ttrOverdue = $ttrUsed > $ttrTotal || $runningAfterDue;
+
+        // BR-EVL-02: Ticket-level evaluation occurs only when the ticket enters an End status (Resolved or Closed).
+        $ttrOverdue = false;
+        if ($ticket->isEnded()) {
+            if ($ttrMetric->processing_mode === 'due-driven') {
+                $firstEndAt = null;
+                if ($ticket->resolved_at && $ticket->closed_at) {
+                    $firstEndAt = Carbon::parse($ticket->resolved_at)->lessThan(Carbon::parse($ticket->closed_at))
+                        ? $ticket->resolved_at
+                        : $ticket->closed_at;
+                } else {
+                    $firstEndAt = $ticket->resolved_at ?? $ticket->closed_at ?? now();
+                }
+
+                $dueAt = $ttrMetric->latest_due_date_ttr
+                    ? Carbon::parse($ttrMetric->latest_due_date_ttr)
+                    : null;
+                $ttrOverdue = $dueAt && Carbon::parse($firstEndAt)->greaterThan($dueAt);
+            } else {
+                $ttrOverdue = $ttrUsed > $ttrTotal;
+            }
+        }
+
         $ttrDiff = $ttrTotal - $ttrUsed;
 
         $fields = [
