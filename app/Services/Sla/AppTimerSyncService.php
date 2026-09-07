@@ -82,7 +82,7 @@ class AppTimerSyncService
      * Generate the compact JSON format for UI.
      * All durations are converted from seconds to milliseconds.
      */
-    protected function generateCompactJson(Ticket $ticket): array
+    public function generateCompactJson(Ticket $ticket): array
     {
         $ticket->loadMissing(['groupMetrics', 'firstResponseMetric', 'statusMetric', 'slaStages.metrics']);
 

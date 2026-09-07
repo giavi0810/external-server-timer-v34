@@ -122,8 +122,16 @@ class StatusChangedHandler
             $this->handleEndToRun($ticket, $statusMetric, $oldStatus, $now, $event);
         }
 
+        if ($wasEnded && $isPaused) {
+            $this->handleEndToPause($ticket, $statusMetric, $oldStatus, $newStatus, $now, $event);
+        }
+
         if ($wasEnded && $isEnded && $oldStatus !== $newStatus) {
             $this->handleEndToEnd($ticket, $statusMetric, $newStatus, $now, $event);
+        }
+
+        if (($isRunning || $isPaused) && $statusMetric->resolution_started_at === null) {
+            $statusMetric->resolution_started_at = $now;
         }
 
         $rtMetric->save();
@@ -150,6 +158,10 @@ class StatusChangedHandler
         if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'running') {
             $this->timerService->accumulateRtUsedTime($rtMetric, $now);
             $rtMetric->status = 'paused';
+        }
+
+        if ($statusMetric->resolution_started_at === null) {
+            $statusMetric->resolution_started_at = $now;
         }
 
         if ($newStatus === 'Waiting For Customer') {
@@ -206,6 +218,10 @@ class StatusChangedHandler
         if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'paused') {
             $rtMetric->status = 'running';
             $rtMetric->started_at = $now;
+        }
+
+        if ($statusMetric->resolution_started_at === null) {
+            $statusMetric->resolution_started_at = $now;
         }
 
         $groupLayer = $this->timerService->getGroupLayer($ticket->group_id);
@@ -267,13 +283,6 @@ class StatusChangedHandler
             $statusMetric->end_total_seconds += $closedDuration;
         }
 
-        if ($ttrMetric->processing_mode === 'due-driven' && $endStartedAt) {
-            // Resolution already includes first End -> first Closed when Closed
-            // follows Resolved. Continue only from the last accounted endpoint.
-            $resolutionResumeAt = $endCycle['first_closed_at'] ?? $endStartedAt;
-            $this->timerService->addResolutionInterval($statusMetric, $resolutionResumeAt, $now);
-        }
-
         // Resolution runs continuously in every non-End status, including
         // Waiting/Pending. Reopen starts the active segment of the next cycle.
         $statusMetric->resolution_started_at = $now;
@@ -291,6 +300,42 @@ class StatusChangedHandler
         if ($groupLayer) {
             $this->timerService->startGroupTimer($ticket, $groupLayer, $now, $event);
         }
+    }
+
+    protected function handleEndToPause(
+        Ticket $ticket,
+        TicketStatusMetric $statusMetric,
+        string $oldStatus,
+        string $newStatus,
+        Carbon $now,
+        TicketEvent $event
+    ): void {
+        $ttrMetric = $ticket->getOrCreateTtrMetric();
+        $endCycle = $this->findCurrentEndCycle($ticket, $event);
+        $endStartedAt = $endCycle['started_at']
+            ?? $this->fallbackEndStartedAt($ticket, $oldStatus);
+        $closedDuration = 0;
+        if ($endStartedAt) {
+            $closedDuration = max(0, $now->timestamp - $endStartedAt->timestamp);
+            $statusMetric->end_total_seconds += $closedDuration;
+        }
+
+        $statusMetric->resolution_started_at = $now;
+
+        if ($newStatus === 'Waiting For Customer') {
+            $statusMetric->waiting_started_at = $now;
+        } elseif ($newStatus === 'Pending') {
+            $statusMetric->pending_started_at = $now;
+        }
+
+        if ($ttrMetric->processing_mode !== 'due-driven') {
+            if ($ttrMetric->latest_due_date_ttr) {
+                $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($closedDuration);
+            }
+        }
+
+        $ttrMetric->save();
+        $this->timerService->recalculateTtrMetrics($ticket, $statusMetric, $now);
     }
 
     protected function handleEndToEnd(
