@@ -75,7 +75,7 @@ class SlaStageService
                 'used_at_checkpoint_seconds' => $usedSeconds,
                 'metric_result' => ($dueAt || $effectiveSla > 0) ? ($failed ? 'fail' : 'pass') : 'not_applicable',
                 'result_reason' => ($dueAt || $effectiveSla > 0)
-                    ? $context.($failed ? '_after_due' : '_before_due')
+                    ? $context . ($failed ? '_after_due' : '_before_due')
                     : 'due_date_not_available',
                 'overdue_at' => $failed ? ($effectiveDueAt ?? $dueAt ?? $checkpointAt) : null,
                 'overdue_owner_group_id' => $failed ? $ticket->group_id : null,

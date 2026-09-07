@@ -109,7 +109,7 @@ class SlaInitializationService
         $statusMetric = $ticket->getOrCreateStatusMetric();
         $statusMetric->update([
             'resolution_total_seconds' => 0,
-            'resolution_started_at' => $createdAt ?? null,
+            'resolution_started_at' => $this->timerService->isEndStatus($ticket->status) ? null : ($createdAt ?? null),
             'waiting_total_seconds' => 0,
             'pending_total_seconds' => 0,
             'end_total_seconds' => 0,

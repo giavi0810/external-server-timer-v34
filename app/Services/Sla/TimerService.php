@@ -11,6 +11,7 @@ use App\Models\TicketGroupSession;
 use App\Models\TicketStatusMetric;
 use App\Services\FreshdeskStatusNormalizer;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * TimerService — Logic timer dùng chung cho tất cả handlers.
@@ -354,12 +355,46 @@ class TimerService
             $startedAt = Carbon::parse($ticket->fd_created_at);
         }
 
+        // Fallback recovery: If startedAt is null, try to find the earliest active marker
+        // from waiting/pending states or group metrics to avoid losing running duration.
+        if (! $startedAt) {
+            $candidates = [];
+            if ($statusMetric->waiting_started_at) {
+                $candidates[] = Carbon::parse($statusMetric->waiting_started_at);
+            }
+            if ($statusMetric->pending_started_at) {
+                $candidates[] = Carbon::parse($statusMetric->pending_started_at);
+            }
+            foreach ($ticket->groupMetrics as $gm) {
+                if ($gm->started_at) {
+                    $candidates[] = Carbon::parse($gm->started_at);
+                }
+            }
+            if (! empty($candidates)) {
+                usort($candidates, fn ($a, $b) => $a->timestamp <=> $b->timestamp);
+                $startedAt = $candidates[0];
+            }
+        }
+
         if ($startedAt) {
+            $addedSeconds = max(0, $endedAt->timestamp - $startedAt->timestamp);
             $statusMetric->resolution_total_seconds = max(
                 0,
-                (int) $statusMetric->resolution_total_seconds
-                    + max(0, $endedAt->timestamp - $startedAt->timestamp)
+                (int) $statusMetric->resolution_total_seconds + $addedSeconds
             );
+
+            Log::info("Resolution timer finalized", [
+                'ticket_id' => $ticket->ticket_id,
+                'started_at' => $startedAt->toIso8601String(),
+                'ended_at' => $endedAt->toIso8601String(),
+                'added_seconds' => $addedSeconds,
+                'resolution_total_seconds' => $statusMetric->resolution_total_seconds,
+            ]);
+        } else {
+            Log::warning("Resolution timer finalize: resolution_started_at is null and no active fallback found", [
+                'ticket_id' => $ticket->ticket_id,
+                'resolution_total_seconds' => $statusMetric->resolution_total_seconds,
+            ]);
         }
 
         $statusMetric->resolution_started_at = null;
