@@ -101,6 +101,11 @@ class HistoryService
             }
 
             if ($periodStart) {
+                if ($key === 'g' && $currentGroup && strcasecmp($this->resolveGroupName($currentGroup), $this->resolveGroupName($val)) === 0) {
+                    $currentGroup = $val;
+                    continue;
+                }
+
                 $durationSec = abs($time->timestamp - $periodStart->timestamp);
                 
                 if ($durationSec > 0) {

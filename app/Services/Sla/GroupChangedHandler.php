@@ -74,6 +74,25 @@ class GroupChangedHandler
         $oldLayer = $this->timerService->getGroupLayer($oldGroupId, is_string($oldGroupName) ? $oldGroupName : null);
         $newLayer = $this->timerService->getGroupLayer($newGroupId, is_string($newGroupName) ? $newGroupName : null);
 
+        $normalizedOldGroupId = $oldGroupId !== null && $oldGroupId !== '' ? trim((string) $oldGroupId) : null;
+        $normalizedNewGroupId = $newGroupId !== null && $newGroupId !== '' ? trim((string) $newGroupId) : null;
+        $normalizedOldGroupName = is_string($oldGroupName) && trim($oldGroupName) !== '' ? trim($oldGroupName) : null;
+        $normalizedNewGroupName = is_string($newGroupName) && trim($newGroupName) !== '' ? trim($newGroupName) : null;
+
+        $hasGroupIdChanged = ($normalizedOldGroupId !== $normalizedNewGroupId);
+        $hasGroupNameChanged = ($normalizedOldGroupName !== null && $normalizedNewGroupName !== null)
+            ? (strcasecmp($normalizedOldGroupName, $normalizedNewGroupName) !== 0)
+            : ($normalizedOldGroupName !== $normalizedNewGroupName);
+
+        if (!$hasGroupIdChanged && !$hasGroupNameChanged) {
+            Log::info("GroupChangedHandler: Bỏ qua vì group không thay đổi ({$oldGroupName})", [
+                'ticket_id'  => $ticketId,
+                'group_id'   => $newGroupId,
+                'group_name' => $newGroupName,
+            ]);
+            return;
+        }
+
         Log::info("GroupChangedHandler: {$oldGroupName} → {$newGroupName}", [
             'ticket_id'        => $ticketId,
             'old_group_id'     => $oldGroupId,
