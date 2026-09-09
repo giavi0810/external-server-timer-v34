@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\RocketChatDeliveryStatus;
+use App\Services\Admin\SystemLogReader;
 use App\Services\RocketChatService;
 use App\Services\Webhooks\DurableWebhookSpool;
 use Carbon\Carbon;
@@ -170,7 +171,7 @@ class LogMonitorController extends Controller
         }
     }
 
-    public function systemLogs(Request $request)
+    public function systemLogs(Request $request, SystemLogReader $logReader)
     {
         $logPath = storage_path('logs');
         $files = [];
@@ -184,91 +185,81 @@ class LogMonitorController extends Controller
         }
 
         rsort($files);
-
-        $fileLabels = [];
-        foreach ($files as $file) {
-            $fileLabels[$file] = $this->logDisplayName($file);
-        }
-
         $defaultFile = $files[0] ?? null;
         $selectedFile = $request->input('file', $defaultFile);
-        $hours = (int) $request->input('hours', 6);
-
         if (! is_string($selectedFile) || ! in_array($selectedFile, $files, true)) {
             $selectedFile = $defaultFile;
         }
 
-        $logContent = [];
-        $fullPath = $selectedFile !== null
-            ? $logPath.DIRECTORY_SEPARATOR.$selectedFile
-            : null;
-
-        if ($fullPath !== null && File::isFile($fullPath)) {
-            $fileSize = filesize($fullPath);
-            $rawLines = [];
-
-            if ($fileSize > 10 * 1024 * 1024) {
-                $bytesToRead = 5 * 1024 * 1024;
-                if ($hours >= 12 || $hours === 0) {
-                    $bytesToRead = 15 * 1024 * 1024;
-                }
-
-                $fp = fopen($fullPath, 'r');
-                if ($fp) {
-                    $offset = max(0, $fileSize - $bytesToRead);
-                    fseek($fp, $offset);
-
-                    if ($offset > 0) {
-                        fgets($fp);
-                    }
-
-                    while (($line = fgets($fp)) !== false) {
-                        $line = trim($line, "\r\n");
-                        if ($line !== '') {
-                            $rawLines[] = $line;
-                        }
-                    }
-                    fclose($fp);
-                }
-            } else {
-                $rawLines = file($fullPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-            }
-
-            $cutoff = $hours > 0 ? Carbon::now()->subHours($hours) : null;
-            $filteredLines = [];
-            $keepCurrentBlock = true;
-
-            foreach ($rawLines as $line) {
-                if (preg_match('/^\[(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\]/', $line, $matches)) {
-                    if ($cutoff === null) {
-                        $keepCurrentBlock = true;
-                    } else {
-                        try {
-                            $lineTime = Carbon::parse($matches[1]);
-                            $keepCurrentBlock = $lineTime->gte($cutoff);
-                        } catch (Throwable $e) {
-                            $keepCurrentBlock = true;
-                        }
-                    }
-                }
-
-                if ($keepCurrentBlock) {
-                    $filteredLines[] = $line;
-                }
-            }
-
-            $logContent = array_reverse($filteredLines);
+        $allowedLevels = ['', 'ERRORS', 'EMERGENCY', 'ALERT', 'CRITICAL', 'ERROR', 'WARNING', 'NOTICE', 'INFO', 'DEBUG'];
+        $level = strtoupper(trim((string) $request->input('level', '')));
+        if (! in_array($level, $allowedLevels, true)) {
+            $level = '';
         }
 
-        return view('admin.system_logs', compact('files', 'fileLabels', 'selectedFile', 'logContent', 'hours'));
+        $allowedComponents = ['', 'freshdesk', 'sla', 'queue', 'redis', 'postgresql', 'rocketchat', 'application'];
+        $component = strtolower(trim((string) $request->input('component', '')));
+        if (! in_array($component, $allowedComponents, true)) {
+            $component = '';
+        }
+
+        $query = mb_substr(trim((string) $request->input('query', '')), 0, 200);
+        $timeFrom = (string) $request->input('time_from', '00:00:00');
+        $timeTo = (string) $request->input('time_to', '23:59:59');
+        $page = max(1, (int) $request->input('page', 1));
+        $selectedPath = $selectedFile !== null
+            ? $logPath.DIRECTORY_SEPARATOR.$selectedFile
+            : null;
+        $result = $logReader->search($selectedPath, compact(
+            'query',
+            'level',
+            'component',
+            'page'
+        ) + [
+            'time_from' => $timeFrom,
+            'time_to' => $timeTo,
+        ]);
+        $timeFrom = $result['time_from'];
+        $timeTo = $result['time_to'];
+
+        $fileMetadata = [];
+        foreach ($files as $file) {
+            $path = $logPath.DIRECTORY_SEPARATOR.$file;
+            $modifiedAt = File::isFile($path) ? Carbon::createFromTimestamp(File::lastModified($path)) : null;
+            $fileMetadata[$file] = [
+                'label' => $file,
+                'size' => File::isFile($path) ? File::size($path) : 0,
+                'modified_at' => $modifiedAt,
+            ];
+        }
+
+        $latestTimestamp = $selectedFile !== null
+            ? ($fileMetadata[$selectedFile]['modified_at'] ?? null)
+            : null;
+        $staleAfterHours = 24;
+        $sourceIsStale = $selectedFile === $defaultFile
+            && ($latestTimestamp === null
+                || Carbon::parse($latestTimestamp)->lt(now()->subHours($staleAfterHours)));
+
+        return view('admin.system_logs', compact(
+            'files',
+            'fileMetadata',
+            'selectedFile',
+            'query',
+            'level',
+            'component',
+            'timeFrom',
+            'timeTo',
+            'result',
+            'latestTimestamp',
+            'sourceIsStale',
+            'staleAfterHours'
+        ));
     }
 
     private function logDisplayName(string $fileName): string
     {
-        $displayName = preg_replace('/\.log$/i', '', $fileName) ?? $fileName;
-        $displayName = preg_replace('/^laravel-?/i', '', $displayName) ?? $displayName;
-
-        return $displayName !== '' ? $displayName : 'Hiện tại';
+        return $fileName;
     }
 
     public function downloadSystemLog(Request $request)
