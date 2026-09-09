@@ -61,7 +61,7 @@
         <div class="bg-white border border-slate-200/80 rounded-xl p-4 shadow-xs flex flex-col justify-between hover:shadow-md transition-shadow">
             <div class="flex items-start justify-between space-x-2">
                 <div class="min-w-0">
-                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block truncate cursor-default" title="Thông báo sự cố Freshdesk chờ vào hàng chờ">Sự cố mới</span>
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider block truncate cursor-default" title="Lượt webhook Freshdesk đang chờ được phân phối vào Queue">Webhook chờ xử lý</span>
                     <span class="text-3xl font-extrabold text-indigo-600 mt-1 block font-mono">{{ $freshdeskSpoolCounts['ready'] }}</span>
                 </div>
                 <div class="w-10 h-10 bg-indigo-50 border border-indigo-100 rounded-xl flex-shrink-0 flex items-center justify-center text-indigo-600">
@@ -204,7 +204,7 @@
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-base font-bold text-slate-900 flex items-center space-x-2 min-w-0">
                     <i class="fa-solid fa-life-ring text-indigo-600 flex-shrink-0"></i>
-                    <span class="truncate" title="Tiếp nhận sự cố Freshdesk Webhook">Tiếp nhận sự cố Freshdesk</span>
+                    <span class="truncate" title="Trạng thái kỹ thuật của các lượt webhook Freshdesk">Luồng xử lý webhook Freshdesk</span>
                 </h2>
                 <button onclick="openSpoolModal('freshdesk', 'ready')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-1.5 shadow-xs flex-shrink-0">
                     <i class="fa-solid fa-folder-tree"></i>
@@ -213,33 +213,33 @@
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                <div onclick="openSpoolModal('freshdesk', 'temporary')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="1. Tiếp nhận sự cố Freshdesk Webhook">
-                    <span class="text-xs font-semibold text-slate-700 truncate">1. Tiếp nhận</span>
+                <div onclick="openSpoolModal('freshdesk', 'temporary')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="1. Webhook đang được ghi an toàn xuống tệp tạm">
+                    <span class="text-xs font-semibold text-slate-700 truncate">1. Đang ghi tệp tạm</span>
                     <span class="text-xs font-bold text-slate-500 font-mono ml-1 bg-white px-1.5 py-0.5 rounded border border-slate-200">{{ $freshdeskSpoolCounts['temporary'] }}</span>
                 </div>
 
-                <div onclick="openSpoolModal('freshdesk', 'ready')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="2. Chờ nạp vào Redis Queue">
-                    <span class="text-xs font-semibold text-slate-700 truncate">2. Chờ Queue</span>
+                <div onclick="openSpoolModal('freshdesk', 'ready')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="2. Webhook đang chờ dispatcher phân phối vào Redis Queue">
+                    <span class="text-xs font-semibold text-slate-700 truncate">2. Chờ phân phối</span>
                     <span class="text-xs font-bold text-indigo-600 font-mono ml-1 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">{{ $freshdeskSpoolCounts['ready'] }}</span>
                 </div>
 
-                <div onclick="openSpoolModal('freshdesk', 'enqueued')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="3. Đã nạp vào Redis Queue">
-                    <span class="text-xs font-semibold text-slate-700 truncate">3. Đã Queue</span>
+                <div onclick="openSpoolModal('freshdesk', 'enqueued')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="3. Webhook đã được nạp vào Redis Queue và đang chờ worker">
+                    <span class="text-xs font-semibold text-slate-700 truncate">3. Đã vào Redis Queue</span>
                     <span class="text-xs font-bold text-sky-600 font-mono ml-1 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">{{ $freshdeskSpoolCounts['enqueued'] }}</span>
                 </div>
 
                 <div onclick="openSpoolModal('freshdesk', 'processing')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="4. Worker đang xử lý tính toán SLA">
-                    <span class="text-xs font-semibold text-slate-700 truncate">4. Đang xử lý</span>
+                    <span class="text-xs font-semibold text-slate-700 truncate">4. Worker đang xử lý</span>
                     <span class="text-xs font-bold text-amber-600 font-mono ml-1 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">{{ $freshdeskSpoolCounts['processing'] }}</span>
                 </div>
 
-                <div onclick="openSpoolModal('freshdesk', 'committed-gc')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="5. Hoàn thành xử lý và lưu nhật ký">
-                    <span class="text-xs font-semibold text-slate-700 truncate">5. Hoàn thành</span>
+                <div onclick="openSpoolModal('freshdesk', 'committed-gc')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="5. Webhook đã xử lý thành công và đang chờ dọn tệp">
+                    <span class="text-xs font-semibold text-slate-700 truncate">5. Đã xử lý, chờ dọn</span>
                     <span class="text-xs font-bold text-emerald-600 font-mono ml-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">{{ $freshdeskSpoolCounts['committed-gc'] }}</span>
                 </div>
 
-                <div onclick="openSpoolModal('freshdesk', 'quarantine')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="6. Tạm dừng do lỗi dữ liệu (Cách ly)">
-                    <span class="text-xs font-semibold text-slate-700 truncate">6. Cách ly lỗi</span>
+                <div onclick="openSpoolModal('freshdesk', 'quarantine')" class="flex items-center justify-between p-2.5 bg-slate-50/80 rounded-lg border border-slate-200 hover:bg-slate-100/80 cursor-pointer transition-colors" title="6. Webhook đã dừng retry và cần kiểm tra nguyên nhân">
+                    <span class="text-xs font-semibold text-slate-700 truncate">6. Cách ly cần kiểm tra</span>
                     <span class="text-xs font-bold text-rose-600 font-mono ml-1 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">{{ $freshdeskSpoolCounts['quarantine'] }}</span>
                 </div>
             </div>
@@ -500,18 +500,30 @@
             ]
         },
         freshdesk: {
-            title: 'Hàng chờ tiếp nhận sự cố Freshdesk',
-            path: 'storage/app/freshdesk-spool/',
+            title: 'Luồng xử lý webhook Freshdesk',
+            path: @json($freshdeskSpoolRoot),
             tabs: [
-                { id: 'temporary', label: '1. Tiếp nhận', color: 'bg-slate-400', count: {{ $freshdeskSpoolCounts['temporary'] }} },
-                { id: 'ready', label: '2. Chờ nạp Queue', color: 'bg-indigo-500', count: {{ $freshdeskSpoolCounts['ready'] }} },
-                { id: 'enqueued', label: '3. Đã nạp Queue', color: 'bg-sky-500', count: {{ $freshdeskSpoolCounts['enqueued'] }} },
-                { id: 'processing', label: '4. Đang xử lý', color: 'bg-amber-500', count: {{ $freshdeskSpoolCounts['processing'] }} },
-                { id: 'committed-gc', label: '5. Hoàn thành', color: 'bg-emerald-500', count: {{ $freshdeskSpoolCounts['committed-gc'] }} },
-                { id: 'quarantine', label: '6. Cách ly lỗi', color: 'bg-rose-500', count: {{ $freshdeskSpoolCounts['quarantine'] }} }
+                { id: 'temporary', label: '1. Đang ghi tệp tạm', color: 'bg-slate-400', count: {{ $freshdeskSpoolCounts['temporary'] }} },
+                { id: 'ready', label: '2. Chờ phân phối', color: 'bg-indigo-500', count: {{ $freshdeskSpoolCounts['ready'] }} },
+                { id: 'enqueued', label: '3. Đã vào Redis Queue', color: 'bg-sky-500', count: {{ $freshdeskSpoolCounts['enqueued'] }} },
+                { id: 'processing', label: '4. Worker đang xử lý', color: 'bg-amber-500', count: {{ $freshdeskSpoolCounts['processing'] }} },
+                { id: 'committed-gc', label: '5. Đã xử lý, chờ dọn', color: 'bg-emerald-500', count: {{ $freshdeskSpoolCounts['committed-gc'] }} },
+                { id: 'quarantine', label: '6. Cách ly cần kiểm tra', color: 'bg-rose-500', count: {{ $freshdeskSpoolCounts['quarantine'] }} }
             ]
         }
     };
+
+    const quarantineReasonLabels = {
+        maximum_attempts_exceeded: 'Đã hết số lần thử',
+        maximum_age_exceeded: 'Đã quá thời hạn retry',
+        permanent_payload_rejection: 'Payload bị từ chối',
+        request_validation_failed: 'Dữ liệu webhook không hợp lệ',
+        processing_failed: 'Xử lý webhook thất bại'
+    };
+
+    function quarantineReasonLabel(reasonCode) {
+        return quarantineReasonLabels[reasonCode] || reasonCode || 'Chưa có metadata';
+    }
 
     function openSpoolModal(type = 'rocketchat', folder = 'ready') {
         currentSpoolType = type;
@@ -682,15 +694,24 @@
                 contentHeader.classList.add('flex');
                 fileTitle.innerText = data.filename;
 
-                if (data.parsed && data.parsed.event_code) {
-                    fileStatus.innerText = 'Sự cố: ' + data.parsed.event_code;
+                if (data.quarantine_metadata) {
+                    fileStatus.innerText = 'Cách ly: ' + quarantineReasonLabel(data.quarantine_metadata.reason_code);
+                } else if (type === 'freshdesk' && currentSpoolFolder === 'quarantine') {
+                    fileStatus.innerText = 'Cách ly: chưa có metadata';
+                } else if (type === 'freshdesk' && data.parsed && data.parsed.payload && data.parsed.payload.event_type) {
+                    fileStatus.innerText = 'Sự kiện: ' + data.parsed.payload.event_type;
+                } else if (data.parsed && data.parsed.event_code) {
+                    fileStatus.innerText = 'Sự kiện: ' + data.parsed.event_code;
                 } else {
                     fileStatus.innerText = 'JSON PAYLOAD';
                 }
 
                 let formatted = data.raw_content;
                 if (data.parsed) {
-                    formatted = JSON.stringify(data.parsed, null, 2);
+                    formatted = JSON.stringify(data.quarantine_metadata ? {
+                        quarantine: data.quarantine_metadata,
+                        receipt: data.parsed
+                    } : data.parsed, null, 2);
                 }
 
                 jsonView.innerText = formatted;

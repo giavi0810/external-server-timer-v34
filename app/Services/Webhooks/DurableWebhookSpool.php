@@ -2,6 +2,7 @@
 
 namespace App\Services\Webhooks;
 
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -97,6 +98,72 @@ class DurableWebhookSpool
         return $files;
     }
 
+    /**
+     * Return only spool files that can be recognized by the state machine.
+     * Diagnostic sidecars and unrelated files must never affect dashboard counts.
+     *
+     * @return list<string>
+     */
+    public function findStateFiles(string $state, int $limit = PHP_INT_MAX): array
+    {
+        $files = [];
+        foreach ($this->stateFilePaths($state) as $path) {
+            $files[] = $path;
+            if (count($files) >= max(1, $limit)) {
+                break;
+            }
+        }
+
+        sort($files, SORT_STRING);
+
+        return $files;
+    }
+
+    public function countStateFiles(string $state): int
+    {
+        $count = 0;
+        foreach ($this->stateFilePaths($state) as $_path) {
+            $count++;
+        }
+
+        return $count;
+    }
+
+    /**
+     * Scan one state without retaining its complete file list in memory.
+     *
+     * @return array{count: int, files: list<string>}
+     */
+    public function stateSnapshot(string $state, int $recentLimit = 100): array
+    {
+        $recentLimit = max(0, $recentLimit);
+        $count = 0;
+        $recent = [];
+
+        foreach ($this->stateFilePaths($state) as $path) {
+            $count++;
+            if ($recentLimit === 0) {
+                continue;
+            }
+
+            $recent[] = [
+                'path' => $path,
+                'modified_at' => (int) (@filemtime($path) ?: 0),
+            ];
+
+            if (count($recent) > $recentLimit * 2) {
+                $recent = array_slice($this->sortRecentFiles($recent), 0, $recentLimit);
+            }
+        }
+
+        $recent = array_slice($this->sortRecentFiles($recent), 0, $recentLimit);
+
+        return [
+            'count' => $count,
+            'files' => array_values(array_column($recent, 'path')),
+        ];
+    }
+
     public function claimForDispatch(string $readyPath): array
     {
         $metadata = $this->requireMetadata($readyPath);
@@ -168,11 +235,16 @@ class DurableWebhookSpool
         }
 
         $attempt = $metadata['attempt'] + 1;
-        if (
-            $attempt >= max(1, (int) config('freshdesk_spool.max_attempts'))
-            || $this->maximumAgeExceeded($path, $receivedAt)
-        ) {
-            return $this->moveWithToken($path, 'quarantine', $expectedToken, time(), true, $attempt);
+        $maximumAttemptsExceeded = $attempt >= max(1, (int) config('freshdesk_spool.max_attempts'));
+        $maximumAgeExceeded = $this->maximumAgeExceeded($path, $receivedAt);
+        if ($maximumAttemptsExceeded || $maximumAgeExceeded) {
+            return $this->moveToQuarantine($path, $expectedToken, $error, [
+                'reason_code' => $maximumAttemptsExceeded
+                    ? 'maximum_attempts_exceeded'
+                    : 'maximum_age_exceeded',
+                'maximum_attempts_exceeded' => $maximumAttemptsExceeded,
+                'maximum_age_exceeded' => $maximumAgeExceeded,
+            ], $attempt);
         }
 
         $backoff = config('freshdesk_spool.backoff');
@@ -188,9 +260,39 @@ class DurableWebhookSpool
         return $this->moveWithToken($path, 'ready', $expectedToken, time() + $delay, true, $attempt);
     }
 
-    public function quarantine(string $path, string $expectedToken): string
+    public function quarantine(
+        string $path,
+        string $expectedToken,
+        ?\Throwable $error = null,
+        array $context = []
+    ): string {
+        return $this->moveToQuarantine($path, $expectedToken, $error, $context);
+    }
+
+    public function quarantineMetadata(string $quarantinedPath): ?array
     {
-        return $this->moveWithToken($path, 'quarantine', $expectedToken, time(), true);
+        if (! $this->isInState($quarantinedPath, 'quarantine')) {
+            return null;
+        }
+
+        $metadataPath = $this->quarantineMetadataPath($quarantinedPath);
+        $json = @file_get_contents($metadataPath);
+        if ($json === false) {
+            return null;
+        }
+
+        try {
+            $metadata = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+            return is_array($metadata) ? $metadata : null;
+        } catch (\Throwable $exception) {
+            Log::warning('Unable to decode Freshdesk quarantine metadata', [
+                'path' => $metadataPath,
+                'reason' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     public function findReceipt(string $state, string $receiptId): ?string
@@ -213,7 +315,8 @@ class DurableWebhookSpool
 
         $metadata = $this->requireMetadata($path);
 
-        return $this->moveWithToken(
+        $metadataPath = $this->quarantineMetadataPath($path);
+        $destination = $this->moveWithToken(
             $path,
             'ready',
             $metadata['token'],
@@ -221,6 +324,27 @@ class DurableWebhookSpool
             true,
             $metadata['attempt']
         );
+
+        if (is_file($metadataPath)) {
+            if (! @unlink($metadataPath)) {
+                Log::warning('Unable to remove released Freshdesk quarantine metadata', [
+                    'path' => $metadataPath,
+                ]);
+            } else {
+                try {
+                    $this->syncDirectory(dirname($metadataPath));
+                } catch (\Throwable $exception) {
+                    // The receipt has already been released successfully. Metadata
+                    // cleanup durability must not make the CLI report a false failure.
+                    Log::warning('Unable to fsync released Freshdesk quarantine metadata directory', [
+                        'path' => dirname($metadataPath),
+                        'reason' => $exception->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        return $destination;
     }
 
     public function isInState(string $path, string $state): bool
@@ -300,6 +424,70 @@ class DurableWebhookSpool
         $this->renameDurably($path, $destination);
 
         return $destination;
+    }
+
+    private function moveToQuarantine(
+        string $path,
+        string $expectedToken,
+        ?\Throwable $error,
+        array $context,
+        ?int $attempt = null
+    ): string {
+        $sourceMetadata = $this->requireMetadata($path);
+        $destination = $this->moveWithToken(
+            $path,
+            'quarantine',
+            $expectedToken,
+            time(),
+            true,
+            $attempt
+        );
+        $destinationMetadata = $this->requireMetadata($destination);
+
+        $diagnostic = array_filter([
+            'schema_version' => 1,
+            'receipt_id' => $destinationMetadata['receipt_id'],
+            'attempt' => $destinationMetadata['attempt'],
+            'quarantined_at' => now()->utc()->toIso8601String(),
+            'reason_code' => $context['reason_code'] ?? 'processing_failed',
+            'reason' => $context['reason'] ?? $error?->getMessage(),
+            'exception_class' => $error !== null ? $error::class : null,
+            'http_status' => $context['http_status'] ?? null,
+            'maximum_attempts_exceeded' => $context['maximum_attempts_exceeded'] ?? null,
+            'maximum_age_exceeded' => $context['maximum_age_exceeded'] ?? null,
+            'previous_attempt' => $sourceMetadata['attempt'],
+        ], static fn (mixed $value): bool => $value !== null);
+
+        try {
+            $this->writeQuarantineMetadata($destination, $diagnostic);
+        } catch (\Throwable $exception) {
+            // The durable payload is already safely quarantined. A diagnostic
+            // sidecar failure must not return it to the processing lifecycle.
+            Log::error('Unable to persist Freshdesk quarantine metadata', [
+                'receipt_id' => $destinationMetadata['receipt_id'],
+                'reason' => $exception->getMessage(),
+            ]);
+        }
+
+        return $destination;
+    }
+
+    private function writeQuarantineMetadata(string $quarantinedPath, array $metadata): void
+    {
+        $destination = $this->quarantineMetadataPath($quarantinedPath);
+        $temporary = $destination.'.'.bin2hex(random_bytes(8)).'.tmp';
+        $json = json_encode(
+            $metadata,
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR
+        );
+
+        $this->writeDurably($temporary, $json);
+        $this->renameDurably($temporary, $destination);
+    }
+
+    private function quarantineMetadataPath(string $quarantinedPath): string
+    {
+        return $quarantinedPath.'.error.json';
     }
 
     private function maximumAgeExceeded(string $path, ?string $receivedAt): bool
@@ -426,6 +614,49 @@ class DurableWebhookSpool
             $this->syncDirectory($parent);
             $directory = $parent;
         }
+    }
+
+    /** @return \Generator<int, string> */
+    private function stateFilePaths(string $state): \Generator
+    {
+        $root = $this->statePath($state);
+        if (! is_dir($root)) {
+            return;
+        }
+
+        if ($state === 'temporary') {
+            foreach (new \DirectoryIterator($root) as $file) {
+                if ($file->isFile()
+                    && preg_match('/^[0-9a-f-]{36}\.tmp$/i', $file->getFilename())) {
+                    yield $file->getPathname();
+                }
+            }
+
+            return;
+        }
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($iterator as $file) {
+            if ($file->isFile() && $this->parseFileName($file->getFilename()) !== null) {
+                yield $file->getPathname();
+            }
+        }
+    }
+
+    /**
+     * @param  list<array{path: string, modified_at: int}>  $files
+     * @return list<array{path: string, modified_at: int}>
+     */
+    private function sortRecentFiles(array $files): array
+    {
+        usort($files, static function (array $left, array $right): int {
+            return ($right['modified_at'] <=> $left['modified_at'])
+                ?: strcmp($right['path'], $left['path']);
+        });
+
+        return $files;
     }
 
     private function statePath(string $state): string
