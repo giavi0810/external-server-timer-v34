@@ -5,18 +5,18 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\RocketChatDeliveryStatus;
 use App\Services\RocketChatService;
+use App\Services\Webhooks\DurableWebhookSpool;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
-use Throwable;
-
 use Illuminate\Support\Facades\Redis;
+use Throwable;
 
 class LogMonitorController extends Controller
 {
-    public function dashboard(Request $request)
+    public function dashboard(Request $request, DurableWebhookSpool $freshdeskSpool)
     {
         // 1. RocketChat Spool Stats
         $auditRoot = config('rocketchat_audit.root', storage_path('app/rocketchat-audit'));
@@ -28,15 +28,11 @@ class LogMonitorController extends Controller
         ];
 
         // 1b. Freshdesk Webhook Spool Stats
-        $freshdeskSpoolRoot = storage_path('app/freshdesk-spool');
-        $freshdeskSpoolCounts = [
-            'temporary' => File::exists($freshdeskSpoolRoot.'/temporary') ? count(File::files($freshdeskSpoolRoot.'/temporary')) : 0,
-            'ready' => File::exists($freshdeskSpoolRoot.'/ready') ? count(File::allFiles($freshdeskSpoolRoot.'/ready')) : 0,
-            'enqueued' => File::exists($freshdeskSpoolRoot.'/enqueued') ? count(File::files($freshdeskSpoolRoot.'/enqueued')) : 0,
-            'processing' => File::exists($freshdeskSpoolRoot.'/processing') ? count(File::files($freshdeskSpoolRoot.'/processing')) : 0,
-            'committed-gc' => File::exists($freshdeskSpoolRoot.'/committed-gc') ? count(File::files($freshdeskSpoolRoot.'/committed-gc')) : 0,
-            'quarantine' => File::exists($freshdeskSpoolRoot.'/quarantine') ? count(File::files($freshdeskSpoolRoot.'/quarantine')) : 0,
-        ];
+        $freshdeskSpoolRoot = rtrim((string) config('freshdesk_spool.root'), '/\\');
+        $freshdeskSpoolCounts = [];
+        foreach (DurableWebhookSpool::STATES as $state) {
+            $freshdeskSpoolCounts[$state] = $freshdeskSpool->countStateFiles($state);
+        }
 
         // 3. Database & Services Health Check (Fast check first)
         $dbStatus = $request->attributes->get('admin_auth_degraded', false)
@@ -98,7 +94,7 @@ class LogMonitorController extends Controller
             }
         }
 
-        return view('admin.dashboard', compact('spoolCounts', 'freshdeskSpoolCounts', 'deliveryStats', 'dbStatus', 'redisStatus', 'logFiles', 'recentAuditLogs'));
+        return view('admin.dashboard', compact('spoolCounts', 'freshdeskSpoolCounts', 'freshdeskSpoolRoot', 'deliveryStats', 'dbStatus', 'redisStatus', 'logFiles', 'recentAuditLogs'));
     }
 
     public function rocketchatAudit(Request $request)
@@ -109,7 +105,7 @@ class LogMonitorController extends Controller
 
         try {
             DB::connection()->getPdo();
-            
+
             $query = RocketChatDeliveryStatus::query();
 
             if ($request->filled('status')) {
@@ -321,7 +317,7 @@ class LogMonitorController extends Controller
 
         $callback = function () use ($logs) {
             $file = fopen('php://output', 'w');
-            fputs($file, "\xEF\xBB\xBF"); // UTF-8 BOM
+            fwrite($file, "\xEF\xBB\xBF"); // UTF-8 BOM
 
             fputcsv($file, [
                 'Mã Lượt Gửi (Delivery ID)',
@@ -352,67 +348,79 @@ class LogMonitorController extends Controller
         return response()->stream($callback, 200, $headers);
     }
 
-    public function getSpoolFiles(Request $request)
+    public function getSpoolFiles(Request $request, DurableWebhookSpool $freshdeskSpool)
     {
         $type = strtolower($request->input('type', 'rocketchat'));
         $folder = strtolower($request->input('folder', 'ready'));
 
         if ($type === 'freshdesk') {
-            $spoolRoot = storage_path('app/freshdesk-spool');
+            $spoolRoot = rtrim((string) config('freshdesk_spool.root'), '/\\');
             $allowedFolders = ['ready', 'processing', 'enqueued', 'temporary', 'committed-gc', 'quarantine'];
         } else {
             $spoolRoot = config('rocketchat_audit.root', storage_path('app/rocketchat-audit'));
             $allowedFolders = ['ready', 'processing', 'pending', 'temporary'];
         }
 
-        if (!in_array($folder, $allowedFolders, true)) {
+        if (! in_array($folder, $allowedFolders, true)) {
             $folder = 'ready';
         }
 
-        $targetDir = rtrim($spoolRoot, '/\\') . DIRECTORY_SEPARATOR . $folder;
-
         $filesList = [];
-        if (File::exists($targetDir)) {
-            $allFiles = ($type === 'freshdesk' && $folder === 'ready') ? File::allFiles($targetDir) : File::files($targetDir);
-            foreach ($allFiles as $file) {
-                $relativePath = str_replace(rtrim($spoolRoot, '/\\') . DIRECTORY_SEPARATOR, '', $file->getPathname());
+        if ($type === 'freshdesk') {
+            $snapshot = $freshdeskSpool->stateSnapshot($folder, 100);
+            $totalCount = $snapshot['count'];
+            $allFiles = array_map(
+                static fn (string $path): \SplFileInfo => new \SplFileInfo($path),
+                $snapshot['files']
+            );
+        } else {
+            $targetDir = rtrim($spoolRoot, '/\\').DIRECTORY_SEPARATOR.$folder;
+            $allFiles = File::exists($targetDir) ? File::files($targetDir) : [];
+            $totalCount = count($allFiles);
+        }
+
+        foreach ($allFiles as $file) {
+            if ($file->isFile()) {
+                $relativePath = str_replace(rtrim($spoolRoot, '/\\').DIRECTORY_SEPARATOR, '', $file->getPathname());
+                $quarantineMetadata = $type === 'freshdesk' && $folder === 'quarantine'
+                    ? $freshdeskSpool->quarantineMetadata($file->getPathname())
+                    : null;
                 $filesList[] = [
                     'name' => $file->getFilename(),
                     'path' => str_replace('\\', '/', $relativePath),
-                    'size' => number_format($file->getSize() / 1024, 2) . ' KB',
+                    'size' => number_format($file->getSize() / 1024, 2).' KB',
                     'updated_at' => Carbon::createFromTimestamp($file->getMTime())->format('Y-m-d H:i:s'),
+                    'quarantine_reason' => $quarantineMetadata['reason_code'] ?? null,
                 ];
             }
-            usort($filesList, fn($a, $b) => strcmp($b['updated_at'], $a['updated_at']));
         }
+        usort($filesList, fn ($a, $b) => strcmp($b['updated_at'], $a['updated_at']));
 
         return response()->json([
             'type' => $type,
             'folder' => $folder,
-            'count' => count($filesList),
+            'count' => $totalCount,
             'files' => array_slice($filesList, 0, 100),
         ]);
     }
 
-    public function readSpoolFileContent(Request $request)
+    public function readSpoolFileContent(Request $request, DurableWebhookSpool $freshdeskSpool)
     {
         $filePathParam = $request->input('path');
         $type = strtolower($request->input('type', 'rocketchat'));
 
-        if (!$filePathParam) {
+        if (! $filePathParam) {
             return response()->json(['error' => 'Thiếu tham số path'], 400);
         }
 
         if ($type === 'freshdesk') {
-            $spoolRoot = storage_path('app/freshdesk-spool');
+            $spoolRoot = rtrim((string) config('freshdesk_spool.root'), '/\\');
         } else {
             $spoolRoot = config('rocketchat_audit.root', storage_path('app/rocketchat-audit'));
         }
 
-        $normalizedPath = str_replace(['..', '/', '\\'], ['', DIRECTORY_SEPARATOR, DIRECTORY_SEPARATOR], $filePathParam);
-        $fullPath = rtrim($spoolRoot, '/\\') . DIRECTORY_SEPARATOR . $normalizedPath;
-
-        if (!File::exists($fullPath)) {
+        $fullPath = $this->resolveSpoolFilePath($spoolRoot, $filePathParam);
+        if ($fullPath === null) {
             return response()->json(['error' => 'File không tồn tại hoặc đã được đồng bộ/xóa.'], 404);
         }
 
@@ -423,6 +431,50 @@ class LogMonitorController extends Controller
             'filename' => basename($fullPath),
             'raw_content' => $content,
             'parsed' => $jsonDecoded ?? null,
+            'quarantine_metadata' => $type === 'freshdesk'
+                ? $freshdeskSpool->quarantineMetadata($fullPath)
+                : null,
         ]);
+    }
+
+    private function resolveSpoolFilePath(string $spoolRoot, mixed $requestedPath): ?string
+    {
+        if (! is_string($requestedPath)
+            || $requestedPath === ''
+            || str_contains($requestedPath, "\0")
+            || preg_match('/^(?:[a-z]:[\\\\\/]|[\\\\\/]{1,2})/i', $requestedPath)) {
+            return null;
+        }
+
+        $segments = preg_split('/[\\\\\/]+/', $requestedPath) ?: [];
+        if ($segments === [] || in_array('..', $segments, true)) {
+            return null;
+        }
+
+        $segments = array_values(array_filter(
+            $segments,
+            static fn (string $segment): bool => $segment !== '' && $segment !== '.'
+        ));
+        if ($segments === []) {
+            return null;
+        }
+
+        $resolvedRoot = realpath($spoolRoot);
+        $resolvedFile = realpath(
+            rtrim($spoolRoot, '/\\').DIRECTORY_SEPARATOR.implode(DIRECTORY_SEPARATOR, $segments)
+        );
+        if ($resolvedRoot === false || $resolvedFile === false || ! is_file($resolvedFile)) {
+            return null;
+        }
+
+        $rootPrefix = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $resolvedRoot), DIRECTORY_SEPARATOR)
+            .DIRECTORY_SEPARATOR;
+        $normalizedFile = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $resolvedFile);
+        if (PHP_OS_FAMILY === 'Windows') {
+            $rootPrefix = strtolower($rootPrefix);
+            $normalizedFile = strtolower($normalizedFile);
+        }
+
+        return str_starts_with($normalizedFile, $rootPrefix) ? $resolvedFile : null;
     }
 }

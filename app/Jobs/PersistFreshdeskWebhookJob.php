@@ -121,7 +121,12 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
             }
 
             if ($response->getStatusCode() >= 400) {
-                $spool->quarantine($processingPath, $processingToken);
+                $responseData = $response->getData(true);
+                $spool->quarantine($processingPath, $processingToken, null, [
+                    'reason_code' => 'permanent_payload_rejection',
+                    'reason' => $responseData['reason'] ?? $responseData['message'] ?? 'Webhook payload rejected.',
+                    'http_status' => $response->getStatusCode(),
+                ]);
                 Log::error('Freshdesk spool payload quarantined after permanent validation failure', [
                     'receipt_id' => $envelope['receipt_id'],
                     'http_status' => $response->getStatusCode(),
@@ -132,7 +137,11 @@ class PersistFreshdeskWebhookJob implements ShouldQueue
 
             $spool->markCommitted($processingPath, $processingToken);
         } catch (HttpResponseException $exception) {
-            $spool->quarantine($processingPath, $processingToken);
+            $spool->quarantine($processingPath, $processingToken, $exception, [
+                'reason_code' => 'request_validation_failed',
+                'reason' => 'Webhook request validation failed.',
+                'http_status' => $exception->getResponse()->getStatusCode(),
+            ]);
             Log::error('Freshdesk spool payload quarantined after request validation failure', [
                 'receipt_id' => $claim['receipt_id'],
                 'http_status' => $exception->getResponse()->getStatusCode(),
