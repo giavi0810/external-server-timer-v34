@@ -184,7 +184,12 @@ class LogMonitorController extends Controller
             }
         }
 
-        rsort($files);
+        usort($files, static function (string $left, string $right) use ($logPath): int {
+            $leftModifiedAt = (int) (@filemtime($logPath.DIRECTORY_SEPARATOR.$left) ?: 0);
+            $rightModifiedAt = (int) (@filemtime($logPath.DIRECTORY_SEPARATOR.$right) ?: 0);
+
+            return $rightModifiedAt <=> $leftModifiedAt ?: strcmp($right, $left);
+        });
         $defaultFile = $files[0] ?? null;
         $selectedFile = $request->input('file', $defaultFile);
         if (! is_string($selectedFile) || ! in_array($selectedFile, $files, true)) {
