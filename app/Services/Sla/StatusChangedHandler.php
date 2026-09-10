@@ -210,9 +210,10 @@ class StatusChangedHandler
             if ($ttrMetric->latest_due_date_ttr) {
                 $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
-                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
-            }
+        }
+
+        if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+            $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
         }
 
         if (! $rtMetric->hasFirstResponse() && $rtMetric->status === 'paused') {
@@ -248,9 +249,10 @@ class StatusChangedHandler
             if ($ttrMetric->latest_due_date_ttr) {
                 $ttrMetric->latest_due_date_ttr = Carbon::parse($ttrMetric->latest_due_date_ttr)->addSeconds($waitingDuration);
             }
-            if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
-                $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
-            }
+        }
+
+        if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+            $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
         }
 
         if (! $rtMetric->hasFirstResponse()) {
