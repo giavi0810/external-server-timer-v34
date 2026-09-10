@@ -31,7 +31,10 @@ class TimerService
         ?TicketEvent $sourceEvent = null
     ): void
     {
-        if (! in_array($layer, self::TRACKED_GROUP_LAYERS, true)) {
+        if (
+            ! in_array($layer, self::TRACKED_GROUP_LAYERS, true)
+            || ! $ticket->isRunning()
+        ) {
             return;
         }
 
