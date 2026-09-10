@@ -172,7 +172,11 @@ class AppTimerSyncService
                 'us' => $currentResoSeconds * 1000,
                 'rs' => $statusMetric->resolution_started_at ? $statusMetric->resolution_started_at->toIso8601ZuluString() : null,
             ],
-            'ttr' => max(0, $ttrMetric->total_seconds ?? 0) * 1000,
+            'ttr' => [
+                'at' => max(0, $ttrMetric->total_seconds ?? 0) * 1000,
+                'us' => $this->effectiveTtrUsed($ticket, $ttrMetric) * 1000,
+                'tu' => $this->effectiveTtrUsed($ticket, $ttrMetric) * 1000,
+            ],
             'et' => $extraInfo,
         ];
     }
