@@ -7,6 +7,7 @@ use App\Models\SlaPolicy;
 use App\Models\Ticket;
 use App\Models\TicketEvent;
 use App\Models\TicketFirstResponseMetric;
+use App\Models\TicketGroupMetric;
 use App\Models\TicketGroupSession;
 use App\Models\TicketStatusMetric;
 use App\Services\FreshdeskStatusNormalizer;
@@ -185,12 +186,6 @@ class TimerService
 
     public function recalculateGroupMetrics(Ticket $ticket, array $layerBudgetOverrides = [], ?Carbon $now = null): void
     {
-        $layerConfig = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
-
-        if (! $layerConfig) {
-            return;
-        }
-
         $normalizedOverrides = [];
         foreach ($layerBudgetOverrides as $layer => $seconds) {
             $normalizedLayer = strtoupper((string) $layer);
@@ -200,23 +195,48 @@ class TimerService
             $normalizedOverrides[$normalizedLayer] = max(0, (int) $seconds);
         }
 
+        $ttrMetric = $ticket->getOrCreateTtrMetric();
+        // BRD Rule 2.3: once Change Due Date switches the ticket to due-driven,
+        // status/group events may update usage but must not restore budgets from
+        // the current priority policy. Explicit overrides are reserved for the
+        // Change Due Date calculation itself (for example, its L4 extension).
+        $preserveDueDrivenBudgets = $ttrMetric->processing_mode === 'due-driven';
+        $layerConfig = $preserveDueDrivenBudgets
+            ? null
+            : SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
+
+        if (! $preserveDueDrivenBudgets && ! $layerConfig) {
+            return;
+        }
+
         $timers = $ticket->groupMetrics()->get();
+        $storedLayerBudgets = $timers
+            ->whereNull('group_id')
+            ->mapWithKeys(fn (TicketGroupMetric $timer): array => [
+                $timer->layer => max(0, (int) $timer->total_seconds),
+            ]);
+
         foreach ($timers as $timer) {
             if (! in_array($timer->layer, self::TRACKED_GROUP_LAYERS, true)) {
                 continue;
             }
 
             $budgetField = strtolower($timer->layer).'_seconds';
-            $budget = $normalizedOverrides[$timer->layer] ?? ($layerConfig->$budgetField ?? 0);
+            $budget = $normalizedOverrides[$timer->layer]
+                ?? ($preserveDueDrivenBudgets
+                    ? $storedLayerBudgets->get($timer->layer, max(0, (int) $timer->total_seconds))
+                    : ($layerConfig->$budgetField ?? 0));
             $safeUsed = max(0, (int) ($timer->used_seconds ?? 0));
 
             if ($timer->group_id === null) {
                 continue;
             }
 
-            $timer->total_seconds = $budget;
-            $timer->used_seconds = $safeUsed;
-            $timer->save();
+            if ($timer->total_seconds !== $budget || (int) $timer->used_seconds !== $safeUsed) {
+                $timer->total_seconds = $budget;
+                $timer->used_seconds = $safeUsed;
+                $timer->save();
+            }
         }
 
         foreach (self::TRACKED_GROUP_LAYERS as $layer) {
@@ -224,11 +244,16 @@ class TimerService
             $totalUsed = max(0, (int) ($aggregateTimer->used_seconds ?? 0));
 
             $budgetField = strtolower($layer).'_seconds';
-            $layerBudget = $normalizedOverrides[$layer] ?? ($layerConfig ? $layerConfig->$budgetField : 0);
+            $layerBudget = $normalizedOverrides[$layer]
+                ?? ($preserveDueDrivenBudgets
+                    ? $storedLayerBudgets->get($layer, max(0, (int) $aggregateTimer->total_seconds))
+                    : ($layerConfig ? $layerConfig->$budgetField : 0));
 
-            $aggregateTimer->total_seconds = $layerBudget;
-            $aggregateTimer->used_seconds = $totalUsed;
-            $aggregateTimer->save();
+            if ($aggregateTimer->total_seconds !== $layerBudget || (int) $aggregateTimer->used_seconds !== $totalUsed) {
+                $aggregateTimer->total_seconds = $layerBudget;
+                $aggregateTimer->used_seconds = $totalUsed;
+                $aggregateTimer->save();
+            }
         }
 
         $statusMetric = $ticket->getOrCreateStatusMetric();
