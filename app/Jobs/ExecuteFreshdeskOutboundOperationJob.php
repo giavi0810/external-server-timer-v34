@@ -342,9 +342,17 @@ class ExecuteFreshdeskOutboundOperationJob implements ShouldQueue
             throw new \RuntimeException('Freshdesk Due Date PUT failed.');
         }
 
+        $displayDueDate = rescue(
+            static fn () => Carbon::parse($dueDate)
+                ->setTimezone('Asia/Ho_Chi_Minh')
+                ->format('H:i d/m/Y'),
+            $dueDate,
+            false
+        );
+
         $noteLines = [
             "Thay đổi Due Date lần {$nextCount}",
-            "- Due Date mới: {$dueDate}",
+            "- Due Date mới: {$displayDueDate}",
             '- Processing Mode: due-driven',
             "- Tag: {$dueDateTag}",
         ];
