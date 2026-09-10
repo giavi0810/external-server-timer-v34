@@ -9,6 +9,8 @@ use App\Models\SlaPolicy;
 use App\Models\TicketDueDateChange;
 use App\Models\TicketSlaStage;
 use App\Models\TicketSlaStageMetric;
+use App\Models\TicketTtrMetric;
+use App\Models\TicketFirstResponseMetric;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
@@ -50,6 +52,19 @@ class DueDateChangedHandler
      */
     public function handle(int $ticketId, array $ticketData, array $changes, TicketEvent $event): void
     {
+        // 0. Idempotency check: tránh xử lý lặp lại cùng một event
+        if ($event->id && TicketSlaStage::query()
+            ->where('ticket_id', $ticketId)
+            ->where('trigger_type', 'due_date_change')
+            ->where('opened_by_event_id', $event->id)
+            ->exists()) {
+            Log::info("DueDateChangedHandler: bỏ qua vì event due_date_change đã được xử lý", [
+                'ticket_id' => $ticketId,
+                'event_id' => $event->id,
+            ]);
+            return;
+        }
+
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
 
         $eventAt = $event->occurredAt();
@@ -104,14 +119,15 @@ class DueDateChangedHandler
             $customFields,
             ['cf_processing_mode', 'cf_sla_mode']
         );
-        $isDueDriven = $incomingProcessingMode === 'due-driven'
-            || ($incomingProcessingMode === null && $ttrMetric->processing_mode === 'due-driven');
 
-        $ttrMetric->processing_mode = $isDueDriven ? 'due-driven' : 'priority-driven';
+        $ttrMetric->processing_mode = ($incomingProcessingMode === 'priority-driven')
+            ? 'priority-driven'
+            : 'due-driven';
         $ttrMetric->save();
         $rtMetric->save();
 
-        $this->recalculateSlaOnDueDateChange($ticket, $oldDue, $eventAt);
+        $calculationPolicy = $this->resolvePolicyBeforeFirstDueDate($ticket, $event, $eventAt, $ticketData);
+        $this->recalculateSlaOnDueDateChange($ticket, $oldDue, $newDue, $eventAt, $calculationPolicy, $ttrMetric, $rtMetric);
 
         $ticket->save();
         if ($dueChanged) {
@@ -122,7 +138,10 @@ class DueDateChangedHandler
                 $newDue,
                 $eventAt,
                 $customFields,
-                $ttrMetric->processing_mode
+                $ttrMetric->processing_mode,
+                $calculationPolicy,
+                $ttrMetric,
+                $rtMetric
             );
         } else {
             Log::info('DueDateChangedHandler: bỏ qua stage vì due_by không đổi', [
@@ -153,9 +172,13 @@ class DueDateChangedHandler
         Carbon $newDue,
         Carbon $eventAt,
         array $customFields,
-        string $processingMode
+        string $processingMode,
+        ?SlaPolicy $calculationPolicy = null,
+        ?TicketTtrMetric $ttrMetric = null,
+        ?TicketFirstResponseMetric $rtMetric = null
     ): void {
-        $policy = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
+        $policy = $calculationPolicy
+            ?? SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
         if (!$policy || !$oldDue) {
             return;
         }
@@ -168,24 +191,26 @@ class DueDateChangedHandler
             'sequence_number' => ((int) $ticket->slaStages()->max('sequence_number')) + 1,
             'priority_stage_number' => null,
             'trigger_type' => 'due_date_change',
-            'priority' => $ticket->priority,
+            'priority' => $policy->priority,
             'processing_mode' => $processingMode,
             'opened_at' => $eventAt,
             'opened_by_event_id' => $event->id,
         ]);
 
+        $ttr = $ttrMetric ?? $ticket->getOrCreateTtrMetric();
         TicketSlaStageMetric::create([
             'ticket_sla_stage_id' => $stage->id,
             'metric_type' => 'ttr',
             'sla_goal_seconds' => $policy->total_seconds,
-            'used_before_seconds' => $ticket->getOrCreateTtrMetric()->used_seconds,
-            'effective_sla_seconds' => $ticket->getOrCreateTtrMetric()->total_seconds,
+            'used_before_seconds' => $ttr->used_seconds,
+            'effective_sla_seconds' => $ttr->total_seconds,
             'old_due_at' => $oldDue,
             'standard_due_at' => Carbon::parse($ticket->fd_created_at)->addSeconds($policy->total_seconds),
             'adjusted_due_at' => $newDue,
         ]);
 
-        $rt = $ticket->getOrCreateFirstResponseMetric();
+        $rt = $rtMetric ?? $ticket->getOrCreateFirstResponseMetric();
+        $isRtCompleted = $rt->hasFirstResponse() || in_array($rt->status, ['ended_replied', 'ended_closed_no_reply'], true);
         TicketSlaStageMetric::create([
             'ticket_sla_stage_id' => $stage->id,
             'metric_type' => 'rt',
@@ -195,7 +220,8 @@ class DueDateChangedHandler
             'old_due_at' => $rt->latest_due_date_rt,
             'standard_due_at' => $rt->original_due_date_rt,
             'adjusted_due_at' => $rt->latest_due_date_rt,
-            'metric_result' => $rt->first_response_at ? 'not_applicable' : 'pending',
+            'metric_result' => $isRtCompleted ? 'not_applicable' : 'pending',
+            'result_reason' => $isRtCompleted ? 'first_response_already_completed' : null,
         ]);
 
         $agentId = (int) ($event->event_data['conversation_data']['actor_id'] ?? 0);
@@ -247,17 +273,22 @@ class DueDateChangedHandler
         ]);
     }
 
-    protected function recalculateSlaOnDueDateChange(Ticket $ticket, ?Carbon $oldDue, ?Carbon $eventAt = null): void
-    {
-        $ttrMetric = $ticket->getOrCreateTtrMetric();
+    protected function recalculateSlaOnDueDateChange(
+        Ticket $ticket,
+        ?Carbon $oldDue,
+        Carbon $newDue,
+        ?Carbon $eventAt = null,
+        ?SlaPolicy $calculationPolicy = null,
+        ?TicketTtrMetric $ttrMetric = null,
+        ?TicketFirstResponseMetric $rtMetric = null
+    ): void {
+        $ttrMetric ??= $ticket->getOrCreateTtrMetric();
         if (!$ticket->fd_created_at || !$ttrMetric->latest_due_date_ttr) {
             return;
         }
 
-        $newDue = Carbon::parse($ttrMetric->latest_due_date_ttr);
-        $config = SlaPolicy::where('ticket_type', $ticket->ticket_type)
-            ->where('priority', $ticket->priority)
-            ->first();
+        $config = $calculationPolicy
+            ?? SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $ticket->priority);
 
         if (!$config) return;
 
@@ -282,15 +313,14 @@ class DueDateChangedHandler
 
         $ttrMetric->save();
 
-        $extension = max(0, $ttrMetric->total_seconds - $config->total_seconds);
+        $this->timerService->recalculateGroupMetrics(
+            $ticket,
+            $this->fitAnchoredGroupBudgets($config, (int) $ttrMetric->total_seconds),
+            $eventAt
+        );
 
-        $l4Budget = (int) $config->l4_seconds + $extension;
-        $this->timerService->recalculateGroupMetrics($ticket, [
-            'L4' => $l4Budget,
-        ], $eventAt);
-
-        $rtMetric = $ticket->getOrCreateFirstResponseMetric();
-        if (!$rtMetric->hasFirstResponse() && !in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'])) {
+        $rtMetric ??= $ticket->getOrCreateFirstResponseMetric();
+        if (!$rtMetric->hasFirstResponse() && !in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'], true)) {
             $rtMetric->total_seconds = $config->rt_seconds;
             $this->timerService->recalculateRtMetrics($rtMetric);
             $rtMetric->save();
@@ -300,6 +330,159 @@ class DueDateChangedHandler
                 'rt_total'  => $config->rt_seconds,
             ]);
         }
+    }
+
+    /**
+     * Resolve the anchor SLA policy for Due Date changes:
+     * 1. If a due_date_change stage exists, directly read its sla_policy_id.
+     * 2. If first due_date_change:
+     *    - Priority from event Due Date snapshot (no DB query if present).
+     *    - Fallback 1: closest priority_changed event where event_timestamp < eventAt.
+     *    - Fallback 2: priority from ticket_created event.
+     *    - Fallback 3: $ticket->priority with warning log.
+     *    - Determine SlaPolicy (preserving version from active prior stage if same priority).
+     */
+    public function resolvePolicyBeforeFirstDueDate(
+        Ticket $ticket,
+        TicketEvent $event,
+        Carbon $eventAt,
+        array $ticketData = []
+    ): ?SlaPolicy {
+        // 1. Kiểm tra đã tồn tại stage due_date_change chưa (truy vấn trực tiếp sla_policy_id)
+        $firstDueDatePolicyId = TicketSlaStage::query()
+            ->where('ticket_id', $ticket->ticket_id)
+            ->where('trigger_type', 'due_date_change')
+            ->orderBy('sequence_number')
+            ->value('sla_policy_id');
+
+        if ($firstDueDatePolicyId) {
+            $policy = SlaPolicy::find($firstDueDatePolicyId);
+            if ($policy) {
+                return $policy;
+            }
+        }
+
+        // 2. Lấy Priority tại thời điểm ngay trước Change Due Date theo thứ tự:
+        // 2.1. Priority trong snapshot của chính event Due Date (không query lịch sử nếu có)
+        $snapshotPriority = $ticketData['priority']
+            ?? ($event->event_data['ticket_data']['priority'] ?? null);
+
+        $resolvedPriority = null;
+        if ($snapshotPriority !== null && $snapshotPriority !== '') {
+            $resolvedPriority = $this->normalizePriority($snapshotPriority);
+        }
+
+        // 2.2. Nếu snapshot thiếu, lấy event Priority gần nhất có event_timestamp < thời gian Change Due Date
+        if ($resolvedPriority === null) {
+            $lastPriorityEvent = TicketEvent::query()
+                ->where('ticket_id', $ticket->ticket_id)
+                ->where('event_type', TicketEvent::EVENT_PRIORITY_CHANGED)
+                ->where('event_timestamp', '<', $eventAt)
+                ->orderByDesc('event_timestamp')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($lastPriorityEvent) {
+                $priorityChange = collect($lastPriorityEvent->field_changes)->firstWhere('field', 'priority');
+                $pri = $priorityChange['new_value']
+                    ?? ($lastPriorityEvent->event_data['ticket_data']['priority'] ?? null);
+                if ($pri !== null && $pri !== '') {
+                    $resolvedPriority = $this->normalizePriority($pri);
+                }
+            }
+        }
+
+        // 2.3. Nếu chưa từng đổi Priority, lấy Priority từ ticket_created
+        if ($resolvedPriority === null) {
+            $createdEvent = TicketEvent::query()
+                ->where('ticket_id', $ticket->ticket_id)
+                ->where('event_type', TicketEvent::EVENT_TICKET_CREATED)
+                ->orderBy('event_timestamp')
+                ->orderBy('id')
+                ->first();
+
+            if ($createdEvent) {
+                $pri = $createdEvent->event_data['ticket_data']['priority'] ?? null;
+                if ($pri !== null && $pri !== '') {
+                    $resolvedPriority = $this->normalizePriority($pri);
+                }
+            }
+        }
+
+        // 2.4. Chỉ fallback về $ticket->priority khi toàn bộ lịch sử thiếu dữ liệu và phải ghi warning log
+        if ($resolvedPriority === null) {
+            Log::warning("DueDateChangedHandler: Toàn bộ lịch sử thiếu dữ liệu Priority, fallback về ticket->priority", [
+                'ticket_id' => $ticket->ticket_id,
+                'fallback_priority' => $ticket->priority,
+            ]);
+            $resolvedPriority = $this->normalizePriority($ticket->priority);
+        }
+
+        // 3. Xác định SlaPolicy theo Priority vừa tìm được
+        // Ưu tiên giữ đúng version từ stage trước đó của ticket nếu có cùng priority
+        $policy = null;
+        $lastStageBeforeDue = TicketSlaStage::query()
+            ->where('ticket_id', $ticket->ticket_id)
+            ->where('opened_at', '<=', $eventAt)
+            ->orderByDesc('sequence_number')
+            ->first();
+
+        if ($lastStageBeforeDue && $lastStageBeforeDue->priority === $resolvedPriority && $lastStageBeforeDue->sla_policy_id) {
+            $policy = SlaPolicy::find($lastStageBeforeDue->sla_policy_id);
+        }
+
+        if (!$policy) {
+            $policy = SlaPolicy::getPolicy((string) $ticket->ticket_type, (string) $resolvedPriority);
+        }
+
+        return $policy;
+    }
+
+    private function normalizePriority(mixed $priority): string
+    {
+        $map = [
+            1 => 'Low', 2 => 'Medium', 3 => 'High', 4 => 'Urgent',
+            '1' => 'Low', '2' => 'Medium', '3' => 'High', '4' => 'Urgent',
+        ];
+
+        return $map[$priority] ?? (is_string($priority) && $priority !== '' ? $priority : 'Low');
+    }
+
+    /**
+     * Keep the anchor policy allocation and apply all Due Date delta to L4.
+     * If a Due Date is shortened below the anchor SLA, shrink L4 first, then
+     * L3, L2 and L1 so Group totals always equal the current TTR total.
+     *
+     * @return array<string, int>
+     */
+    private function fitAnchoredGroupBudgets(SlaPolicy $policy, int $targetTotal): array
+    {
+        $budgets = [
+            'L1' => max(0, (int) $policy->l1_seconds),
+            'L2' => max(0, (int) $policy->l2_seconds),
+            'L3' => max(0, (int) $policy->l3_seconds),
+            'L4' => max(0, (int) $policy->l4_seconds),
+        ];
+        $delta = max(0, $targetTotal) - array_sum($budgets);
+
+        if ($delta >= 0) {
+            $budgets['L4'] += $delta;
+
+            return $budgets;
+        }
+
+        $remainingCut = abs($delta);
+        foreach (['L4', 'L3', 'L2', 'L1'] as $layer) {
+            $cut = min($remainingCut, $budgets[$layer]);
+            $budgets[$layer] -= $cut;
+            $remainingCut -= $cut;
+
+            if ($remainingCut === 0) {
+                break;
+            }
+        }
+
+        return $budgets;
     }
 
     private function customFieldByPrefix(array $customFields, array $prefixes): mixed
