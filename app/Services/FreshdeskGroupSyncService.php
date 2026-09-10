@@ -28,21 +28,25 @@ class FreshdeskGroupSyncService
 
     public function ensurePayloadsGroupsKnown(array $payloads): void
     {
-        $groupIds = [];
+        $groups = [];
         foreach ($payloads as $payload) {
             if (is_array($payload)) {
-                array_push($groupIds, ...$this->extractGroupIds($payload));
+                foreach ($this->extractGroups($payload) as $groupId => $groupName) {
+                    if ($groupName !== null || ! array_key_exists($groupId, $groups)) {
+                        $groups[$groupId] = $groupName;
+                    }
+                }
             }
         }
 
-        foreach (array_values(array_unique($groupIds)) as $groupId) {
-            $this->ensureGroupKnown($groupId);
+        foreach ($groups as $groupId => $groupName) {
+            $this->ensureGroupKnown($groupId, $groupName);
         }
     }
 
-    public function ensureGroupKnown(string $groupId): void
+    public function ensureGroupKnown(string $groupId, ?string $expectedName = null): void
     {
-        if ($this->isKnownAndActive($groupId)) {
+        if ($this->isKnownAndActive($groupId, $expectedName)) {
             return;
         }
 
@@ -57,8 +61,8 @@ class FreshdeskGroupSyncService
                 max(1, (int) config('freshdesk.group_sync.lock_seconds', 45))
             )->block(
                 max(0, (int) config('freshdesk.group_sync.lock_wait_seconds', 2)),
-                function () use ($groupId, $missingKey): void {
-                    if ($this->isKnownAndActive($groupId)) {
+                function () use ($groupId, $expectedName, $missingKey): void {
+                    if ($this->isKnownAndActive($groupId, $expectedName)) {
                         Cache::forget($missingKey);
 
                         return;
@@ -68,13 +72,17 @@ class FreshdeskGroupSyncService
                         throw new FreshdeskGroupMissingException($groupId);
                     }
 
-                    if (Cache::has(self::LAST_SUCCESSFUL_REFRESH_KEY)) {
+                    $groupExists = $this->isKnownAndActive($groupId);
+                    if (! $groupExists && Cache::has(self::LAST_SUCCESSFUL_REFRESH_KEY)) {
                         $this->rememberMissingGroup($missingKey);
                         throw new FreshdeskGroupMissingException($groupId);
                     }
 
-                    Log::notice('Unknown Freshdesk group detected; refreshing group mappings', [
+                    Log::notice($groupExists
+                        ? 'Freshdesk group name changed; refreshing group mappings'
+                        : 'Unknown Freshdesk group detected; refreshing group mappings', [
                         'group_id' => $groupId,
+                        'expected_name' => $expectedName,
                     ]);
                     try {
                         $this->freshdesk->refreshGroupMappings();
@@ -95,6 +103,14 @@ class FreshdeskGroupSyncService
                         throw new FreshdeskGroupMissingException($groupId);
                     }
 
+                    if (! $this->isKnownAndActive($groupId, $expectedName)) {
+                        Log::warning('Freshdesk webhook group name differs from the refreshed API mapping', [
+                            'group_id' => $groupId,
+                            'webhook_name' => $expectedName,
+                            'api_name' => FreshdeskGroup::query()->whereKey($groupId)->value('name'),
+                        ]);
+                    }
+
                     Cache::forget($missingKey);
                 }
             );
@@ -112,37 +128,87 @@ class FreshdeskGroupSyncService
         );
     }
 
-    private function isKnownAndActive(string $groupId): bool
+    private function isKnownAndActive(string $groupId, ?string $expectedName = null): bool
     {
         $group = FreshdeskGroup::query()->whereKey($groupId)->first();
 
-        return $group !== null
+        $isKnownAndActive = $group !== null
             && $group->is_active
             && $group->name !== ''
             && ! str_starts_with($group->name, 'Freshdesk Group ');
+
+        if (! $isKnownAndActive || $expectedName === null) {
+            return $isKnownAndActive;
+        }
+
+        return trim($group->name) === $expectedName;
     }
 
-    private function extractGroupIds(array $payload): array
+    /**
+     * @return array<string, string|null>
+     */
+    private function extractGroups(array $payload): array
     {
-        $values = [
-            data_get($payload, 'ticket_data.group_id'),
-            data_get($payload, 'ticket.group_id'),
-            data_get($payload, 'raw_payload.ticket.group_id'),
+        $groups = [];
+        $ticketPaths = [
+            'ticket_data',
+            'ticket',
+            'raw_payload.ticket',
         ];
 
+        foreach ($ticketPaths as $ticketPath) {
+            $groupId = $this->normalizeGroupId(data_get($payload, "{$ticketPath}.group_id"));
+            if ($groupId === null) {
+                continue;
+            }
+
+            $groupName = $this->normalizeGroupName(data_get($payload, "{$ticketPath}.group_name"));
+            if ($groupName !== null || ! array_key_exists($groupId, $groups)) {
+                $groups[$groupId] = $groupName;
+            }
+        }
+
+        $changedGroupId = null;
+        $changedGroupName = null;
         foreach (($payload['changes'] ?? []) as $change) {
-            if (is_array($change) && ($change['field'] ?? null) === 'group_id') {
-                $values[] = $change['new_value'] ?? null;
+            if (! is_array($change)) {
+                continue;
+            }
+
+            if (($change['field'] ?? null) === 'group_id') {
+                $changedGroupId = $this->normalizeGroupId($change['new_value'] ?? null);
+            }
+
+            if (($change['field'] ?? null) === 'group_name') {
+                $changedGroupName = $this->normalizeGroupName($change['new_value'] ?? null);
             }
         }
 
-        $ids = [];
-        foreach ($values as $value) {
-            if (is_int($value) || (is_string($value) && preg_match('/^\d+$/', trim($value)))) {
-                $ids[] = (string) $value;
-            }
+        if ($changedGroupId !== null
+            && ($changedGroupName !== null || ! array_key_exists($changedGroupId, $groups))) {
+            $groups[$changedGroupId] = $changedGroupName;
         }
 
-        return array_values(array_unique($ids));
+        return $groups;
+    }
+
+    private function normalizeGroupId(mixed $value): ?string
+    {
+        if (is_int($value) || (is_string($value) && preg_match('/^\d+$/', trim($value)))) {
+            return trim((string) $value);
+        }
+
+        return null;
+    }
+
+    private function normalizeGroupName(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $name = trim($value);
+
+        return $name === '' ? null : $name;
     }
 }
