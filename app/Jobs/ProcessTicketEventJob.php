@@ -36,8 +36,7 @@ class ProcessTicketEventJob implements ShouldQueue
         ?string $outboxToken = null,
         ?int $targetGeneration = null,
         ?int $syncEpoch = null
-    )
-    {
+    ) {
         $this->ticketId = $ticketId;
         $this->isRecoveryDispatch = $isRecoveryDispatch;
         $this->replayAll = $replayAll;
@@ -118,7 +117,8 @@ class ProcessTicketEventJob implements ShouldQueue
                             $shouldSyncTicket = $this->processSingleTicketEvent($event, $slaService) || $shouldSyncTicket;
                             $eventsCount++;
 
-                            if ($this->replayAll
+                            if (
+                                $this->replayAll
                                 && ($eventsCount >= 50 || microtime(true) - $startTime >= 70)
                             ) {
                                 $this->dispatchReplayContinuation();
@@ -128,10 +128,10 @@ class ProcessTicketEventJob implements ShouldQueue
                             $event->markAsPending();
 
                             Log::warning('TicketEvent processing failed, queue retry scheduled', [
-                                'event_id'      => $event->id,
-                                'ticket_id'     => $event->ticket_id,
-                                'event_type'    => $event->event_type,
-                                'error_reason'  => $exception->getMessage(),
+                                'event_id' => $event->id,
+                                'ticket_id' => $event->ticket_id,
+                                'event_type' => $event->event_type,
+                                'error_reason' => $exception->getMessage(),
                                 'exception_class' => $exception::class,
                                 'error_code' => $exception->getCode(),
                                 'attempt' => $this->attempts(),
@@ -176,9 +176,9 @@ class ProcessTicketEventJob implements ShouldQueue
 
             $duration = (int) ((microtime(true) - $startTime) * 1000);
             Log::info('Ticket event batch processed', [
-                'ticket_id'    => $this->ticketId,
+                'ticket_id' => $this->ticketId,
                 'events_count' => $eventsCount,
-                'duration_ms'  => $duration,
+                'duration_ms' => $duration,
             ]);
         } finally {
             $lock->release();
@@ -208,9 +208,9 @@ class ProcessTicketEventJob implements ShouldQueue
             $changes = $event->getFieldChanges();
 
             Log::info('Processing event', [
-                'event_id'   => $event->id,
+                'event_id' => $event->id,
                 'event_type' => $event->event_type,
-                'ticket_id'  => $event->ticket_id,
+                'ticket_id' => $event->ticket_id,
             ]);
 
             switch ($event->event_type) {
@@ -257,7 +257,7 @@ class ProcessTicketEventJob implements ShouldQueue
                 default:
                     Log::warning('Unknown event type', [
                         'event_type' => $event->event_type,
-                        'event_id'   => $event->id,
+                        'event_id' => $event->id,
                     ]);
                     break;
             }
@@ -279,7 +279,7 @@ class ProcessTicketEventJob implements ShouldQueue
             ])
             ->when(
                 $this->targetGeneration !== null,
-                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+                fn($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
             )
             ->update([
                 'status' => TicketEvent::STATUS_FAILED,
@@ -327,7 +327,7 @@ class ProcessTicketEventJob implements ShouldQueue
             ->whereIn('status', [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED])
             ->when(
                 $this->targetGeneration !== null,
-                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+                fn($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
             )
             ->orderBy('event_timestamp')
             ->orderBy('source_order_key')
@@ -342,7 +342,7 @@ class ProcessTicketEventJob implements ShouldQueue
             ->whereIn('status', [TicketEvent::STATUS_PENDING, TicketEvent::STATUS_QUEUED])
             ->when(
                 $this->targetGeneration !== null,
-                fn ($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
+                fn($query) => $query->where('logic_generation', '<=', $this->targetGeneration)
             )
             ->exists();
     }
@@ -355,7 +355,7 @@ class ProcessTicketEventJob implements ShouldQueue
             ->whereNotNull('processed_at')
             ->when(
                 $ticket->updated_at,
-                fn ($query) => $query->where('processed_at', '>', $ticket->updated_at)
+                fn($query) => $query->where('processed_at', '>', $ticket->updated_at)
             )
             ->exists();
     }
@@ -431,7 +431,7 @@ class ProcessTicketEventJob implements ShouldQueue
 
     protected function claimLogicOutbox(): bool
     {
-        $states = $this->replayAll ? ['replaying', 'replay_continue_dispatched'] : ['dispatched'];
+        $states = $this->replayAll ? ['replaying', 'replay_continue_dispatched'] : ['dispatched', 'processing'];
         $nextState = $this->replayAll ? 'replaying' : 'processing';
 
         return TicketLogicOutbox::query()
@@ -458,7 +458,8 @@ class ProcessTicketEventJob implements ShouldQueue
                 ->lockForUpdate()
                 ->first();
 
-            if (!$outbox
+            if (
+                !$outbox
                 || !hash_equals((string) $outbox->lease_token, (string) $this->outboxToken)
                 || $outbox->sync_epoch !== $this->syncEpoch
             ) {
