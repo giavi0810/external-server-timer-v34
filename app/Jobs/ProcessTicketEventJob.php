@@ -125,7 +125,13 @@ class ProcessTicketEventJob implements ShouldQueue
                                 return;
                             }
                         } catch (\Throwable $exception) {
-                            $event->markAsPending();
+                            $event->forceFill([
+                                'status' => TicketEvent::STATUS_PENDING,
+                                'locked_at' => null,
+                                'processing_token' => null,
+                                'attempt_count' => $this->attempts(),
+                                'last_error' => Str::limit($exception->getMessage(), 1000),
+                            ])->save();
 
                             Log::warning('TicketEvent processing failed, queue retry scheduled', [
                                 'event_id' => $event->id,
@@ -285,6 +291,8 @@ class ProcessTicketEventJob implements ShouldQueue
                 'status' => TicketEvent::STATUS_FAILED,
                 'locked_at' => null,
                 'processing_token' => null,
+                'attempt_count' => $this->attempts(),
+                'last_error' => Str::limit($exception->getMessage(), 1000),
             ]);
 
         if ($this->outboxToken !== null) {
