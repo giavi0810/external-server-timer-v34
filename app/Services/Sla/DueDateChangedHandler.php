@@ -153,7 +153,7 @@ class DueDateChangedHandler
         if ($dueChanged) {
             $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         }
-        
+
         if ($rtMetric->latest_due_date_rt) {
             $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
         }
@@ -296,7 +296,7 @@ class DueDateChangedHandler
             $diffSeconds = $newDue->timestamp - $oldDue->timestamp;
             $oldTotal = (int) $ttrMetric->total_seconds;
             $ttrMetric->total_seconds = max(0, $oldTotal + $diffSeconds);
-            
+
             Log::info("DueDateChangedHandler: Cập nhật ttr_total theo công thức App", [
                 'ticket_id' => $ticket->ticket_id,
                 'old_ttr'   => $oldTotal,
@@ -307,7 +307,7 @@ class DueDateChangedHandler
             $createdAt = Carbon::parse($ticket->fd_created_at);
             $statusMetric = $ticket->getOrCreateStatusMetric();
             $pauseTime = (int) $statusMetric->waiting_total_seconds + (int) $statusMetric->pending_total_seconds + (int) $statusMetric->end_total_seconds;
-            
+
             $ttrMetric->total_seconds = max(0, $newDue->timestamp - $createdAt->timestamp - $pauseTime);
         }
 
@@ -334,7 +334,7 @@ class DueDateChangedHandler
 
     /**
      * Resolve the anchor SLA policy for Due Date changes:
-     * 1. If a due_date_change stage exists, directly read its sla_policy_id.
+     * 1. In due-driven mode, preserve the policy anchored by the first due_date_change stage.
      * 2. If first due_date_change:
      *    - Priority from event Due Date snapshot (no DB query if present).
      *    - Fallback 1: closest priority_changed event where event_timestamp < eventAt.
@@ -348,17 +348,20 @@ class DueDateChangedHandler
         Carbon $eventAt,
         array $ticketData = []
     ): ?SlaPolicy {
-        // 1. Kiểm tra đã tồn tại stage due_date_change chưa (truy vấn trực tiếp sla_policy_id)
-        $firstDueDatePolicyId = TicketSlaStage::query()
-            ->where('ticket_id', $ticket->ticket_id)
-            ->where('trigger_type', 'due_date_change')
-            ->orderBy('sequence_number')
-            ->value('sla_policy_id');
+        // Priority-driven tickets must follow the current priority policy. Only
+        // due-driven tickets keep the policy anchored by the first Due Date change.
+        if ($ticket->getOrCreateTtrMetric()->processing_mode === 'due-driven') {
+            $firstDueDatePolicyId = TicketSlaStage::query()
+                ->where('ticket_id', $ticket->ticket_id)
+                ->where('trigger_type', 'due_date_change')
+                ->orderBy('sequence_number')
+                ->value('sla_policy_id');
 
-        if ($firstDueDatePolicyId) {
-            $policy = SlaPolicy::find($firstDueDatePolicyId);
-            if ($policy) {
-                return $policy;
+            if ($firstDueDatePolicyId) {
+                $policy = SlaPolicy::find($firstDueDatePolicyId);
+                if ($policy) {
+                    return $policy;
+                }
             }
         }
 
