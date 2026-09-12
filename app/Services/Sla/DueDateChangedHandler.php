@@ -127,9 +127,32 @@ class DueDateChangedHandler
             ['cf_processing_mode', 'cf_sla_mode']
         );
 
-        $ttrMetric->processing_mode = ($incomingProcessingMode === 'priority-driven')
+        $previousProcessingMode = $this->resolveProcessingModeBeforeEvent(
+            $ticket,
+            $changes,
+            $ttrMetric->processing_mode
+        );
+        $nextProcessingMode = ($incomingProcessingMode === 'priority-driven')
             ? 'priority-driven'
             : 'due-driven';
+
+        if ($previousProcessingMode === 'priority-driven' && $nextProcessingMode === 'due-driven') {
+            // Snapshot the old formula before changing mode. This prevents
+            // Waiting/Pending/End time before the boundary from being added
+            // back when due-driven starts counting wall-clock time.
+            $statusMetric = $ticket->getOrCreateStatusMetric();
+            $usedAtModeSwitch = $this->timerService
+                ->calculateTtrUsedSeconds($ticket, $statusMetric, $eventAt, 'priority-driven');
+            $ttrMetric->used_seconds = $usedAtModeSwitch;
+            $ttrMetric->used_seconds_at_mode_switch = $usedAtModeSwitch;
+            $ttrMetric->mode_switched_at = $eventAt;
+        } elseif ($nextProcessingMode === 'priority-driven') {
+            // A later transition to due-driven must capture a fresh baseline.
+            $ttrMetric->used_seconds_at_mode_switch = null;
+            $ttrMetric->mode_switched_at = null;
+        }
+
+        $ttrMetric->processing_mode = $nextProcessingMode;
         $ttrMetric->save();
         $rtMetric->save();
 
@@ -170,6 +193,33 @@ class DueDateChangedHandler
             'original_due'     => $ttrMetric->original_due_date_ttr,
             'new_due'          => $newDue->toIso8601String(),
         ]);
+    }
+
+    private function resolveProcessingModeBeforeEvent(
+        Ticket $ticket,
+        array $changes,
+        string $storedMode
+    ): string {
+        $modeChange = collect($changes)->first(function (array $change): bool {
+            $field = (string) ($change['field'] ?? '');
+
+            return str_starts_with($field, 'cf_processing_mode')
+                || str_starts_with($field, 'cf_sla_mode');
+        });
+        $oldMode = $modeChange['old_value'] ?? null;
+        if (in_array($oldMode, ['priority-driven', 'due-driven'], true)) {
+            return $oldMode;
+        }
+
+        // Ingress may already have applied the incoming mode to the metric.
+        // The latest SLA stage still represents the state before this event.
+        $stageMode = $ticket->slaStages()
+            ->orderByDesc('sequence_number')
+            ->value('processing_mode');
+
+        return in_array($stageMode, ['priority-driven', 'due-driven'], true)
+            ? $stageMode
+            : $storedMode;
     }
 
     protected function recordDueDateStage(

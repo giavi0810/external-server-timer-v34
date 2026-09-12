@@ -17,6 +17,8 @@ class TicketTtrMetric extends Model
         'used_seconds',
         'processing_mode',
         'started_at',
+        'mode_switched_at',
+        'used_seconds_at_mode_switch',
         'original_due_date_ttr',
         'latest_due_date_ttr',
     ];
@@ -25,6 +27,8 @@ class TicketTtrMetric extends Model
         'total_seconds' => 'integer',
         'used_seconds' => 'integer',
         'started_at' => 'datetime',
+        'mode_switched_at' => 'datetime',
+        'used_seconds_at_mode_switch' => 'integer',
         'original_due_date_ttr' => 'datetime',
         'latest_due_date_ttr' => 'datetime',
     ];
