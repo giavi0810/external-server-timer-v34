@@ -189,18 +189,26 @@ class HistoryService
         return $histories->map(function ($history) {
             $ttrMetric = $history->stage?->metrics->first();
 
+            $reason = $history->reason_detail ?: $history->reason_code;
+            if ($reason === 'unspecified' || empty($reason)) {
+                $reason = '---';
+            }
+
+            $isStageClosed = (bool) $history->stage?->checkpoint_at;
+            $status = $isStageClosed ? ucfirst($ttrMetric?->metric_result ?? 'pending') : '---';
+
             return [
                 'change_no' => $history->change_number,
                 'new_due_date' => $history->new_due_at
                     ? Carbon::parse($history->new_due_at)->timezone('Asia/Ho_Chi_Minh')->format('H:i d/m/Y')
                     : '-',
                 'phase' => $history->processing_phase ?? '-',
-                'reason' => $history->reason_detail ?: $history->reason_code,
+                'reason' => $reason,
                 'timestamp' => $history->submitted_at
                     ? Carbon::parse($history->submitted_at)->timezone('Asia/Ho_Chi_Minh')->format('H:i d/m/Y')
                     : '-',
                 'agent' => $history->agent_name ?? '-',
-                'status' => ucfirst($ttrMetric?->metric_result ?? 'pending'),
+                'status' => $status,
             ];
         })->all();
     }
