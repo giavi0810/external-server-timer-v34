@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SlaPolicy extends Model
 {
+    public const DEFAULT_TICKET_TYPE = 'VIP SLA';
+
     protected $fillable = [
         'ticket_type',
         'priority',
@@ -41,6 +43,8 @@ class SlaPolicy extends Model
 
     public static function getPolicy(string $ticketType, string $priority): ?self
     {
+        $ticketType = self::effectiveTicketType($ticketType);
+
         // 1. Tìm chính xác theo ticket_type và priority
         $policy = self::where('ticket_type', $ticketType)
             ->where('priority', $priority)
@@ -68,6 +72,13 @@ class SlaPolicy extends Model
         return self::where('priority', $priority)
             ->latestVersion()
             ->first();
+    }
+
+    public static function effectiveTicketType(?string $ticketType): string
+    {
+        $ticketType = trim((string) $ticketType);
+
+        return $ticketType === '' ? self::DEFAULT_TICKET_TYPE : $ticketType;
     }
 
     public function getTimeAllocation(): array

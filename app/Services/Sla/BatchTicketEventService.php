@@ -172,7 +172,7 @@ class BatchTicketEventService
             'subject' => $data['subject'] ?? null,
             'status' => $data['status'] ?? 'Open',
             'priority' => $data['priority'] ?? 'Medium',
-            'ticket_type' => $data['ticket_type'] ?? 'VIP',
+            'ticket_type' => $data['ticket_type'] ?? null,
             'group_id' => $groupId,
             'requester_id' => $data['requester_id'] ?? null,
             'fd_created_at' => $data['created_at'] ?? $event['event_timestamp'],

@@ -68,20 +68,27 @@ class DueDateChangedHandler
         $ticket = Ticket::where('ticket_id', $ticketId)->firstOrFail();
 
         $eventAt = $event->occurredAt();
+        $ticketTypeChange = collect($changes)->firstWhere('field', 'ticket_type');
+        $hasTicketTypeChange = $ticketTypeChange !== null
+            && array_key_exists('new_value', $ticketTypeChange);
+        $newTicketType = $ticketTypeChange['new_value'] ?? null;
+        if ($hasTicketTypeChange && ($newTicketType === null || is_string($newTicketType))) {
+            $newTicketType = trim((string) $newTicketType);
+            $newTicketType = $newTicketType === '' ? null : $newTicketType;
+
+            if ($ticket->ticket_type !== $newTicketType) {
+                Log::info("DueDateChangedHandler: ticket_type thay đổi", [
+                    'ticket_id' => $ticketId,
+                    'old_type' => $ticket->ticket_type,
+                    'new_type' => $newTicketType,
+                ]);
+                $ticket->ticket_type = $newTicketType;
+            }
+        }
+
         $this->initService->ensureSlaInitialized($ticket);
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
-
-        $ticketTypeChange = collect($changes)->firstWhere('field', 'ticket_type');
-        $newTicketType = $ticketTypeChange['new_value'] ?? null;
-        if (is_string($newTicketType) && $newTicketType !== '' && $ticket->ticket_type !== $newTicketType) {
-            Log::info("DueDateChangedHandler: ticket_type thay đổi", [
-                'ticket_id' => $ticketId,
-                'old_type' => $ticket->ticket_type,
-                'new_type' => $newTicketType,
-            ]);
-            $ticket->ticket_type = $newTicketType;
-        }
 
         $oldDue = $ttrMetric->latest_due_date_ttr ? Carbon::parse($ttrMetric->latest_due_date_ttr) : null;
         $newDueRaw = $ticketData['due_by']
@@ -432,7 +439,13 @@ class DueDateChangedHandler
             ->first();
 
         if ($lastStageBeforeDue && $lastStageBeforeDue->priority === $resolvedPriority && $lastStageBeforeDue->sla_policy_id) {
-            $policy = SlaPolicy::find($lastStageBeforeDue->sla_policy_id);
+            $stagePolicy = SlaPolicy::find($lastStageBeforeDue->sla_policy_id);
+            if ($stagePolicy
+                && SlaPolicy::effectiveTicketType($stagePolicy->ticket_type)
+                    === SlaPolicy::effectiveTicketType($ticket->ticket_type)
+            ) {
+                $policy = $stagePolicy;
+            }
         }
 
         if (!$policy) {
