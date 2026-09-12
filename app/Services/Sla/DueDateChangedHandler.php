@@ -354,6 +354,7 @@ class DueDateChangedHandler
             $firstDueDatePolicyId = TicketSlaStage::query()
                 ->where('ticket_id', $ticket->ticket_id)
                 ->where('trigger_type', 'due_date_change')
+                ->where('processing_mode', 'due-driven')
                 ->orderBy('sequence_number')
                 ->value('sla_policy_id');
 
