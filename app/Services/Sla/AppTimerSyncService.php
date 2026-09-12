@@ -15,17 +15,13 @@ class AppTimerSyncService
 {
     protected FreshdeskApiService $freshdeskService;
 
-    protected TimelineService $timelineService;
-
     protected TimerService $timerService;
 
     public function __construct(
         FreshdeskApiService $freshdeskService,
-        TimelineService $timelineService,
         TimerService $timerService
     ) {
         $this->freshdeskService = $freshdeskService;
-        $this->timelineService = $timelineService;
         $this->timerService = $timerService;
     }
 
@@ -37,13 +33,9 @@ class AppTimerSyncService
         $data = $this->generateCompactJson($ticket);
         $jsonString = json_encode($data);
 
-        // Build SLA custom fields payload and Activity Log
-        $activityLogString = $this->timelineService->getTimelineString($ticket->ticket_id);
-
         $customFields = array_merge(
             [
                 'cf_timer_history' => $jsonString,
-                'cf_activity_log' => $activityLogString,
             ],
             $this->buildSlaCustomFields($ticket)
         );
