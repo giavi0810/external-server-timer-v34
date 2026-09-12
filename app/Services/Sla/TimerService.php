@@ -307,7 +307,8 @@ class TimerService
     public function calculateTtrUsedSeconds(
         Ticket $ticket,
         TicketStatusMetric $statusMetric,
-        Carbon $checkpointAt
+        Carbon $checkpointAt,
+        ?string $processingModeOverride = null
     ): int {
         if (! $ticket->fd_created_at) {
             return 0;
@@ -317,7 +318,22 @@ class TimerService
         $elapsed = max(0, $checkpointAt->timestamp - $createdAt->timestamp);
         $ttrMetric = $ticket->getOrCreateTtrMetric();
 
-        if ($ttrMetric->processing_mode === 'due-driven') {
+        $processingMode = $processingModeOverride ?? $ttrMetric->processing_mode;
+
+        if ($processingMode === 'due-driven') {
+            // Preserve the priority-driven result captured at the mode boundary.
+            // Only time after the transition follows due-driven semantics, so
+            // pauses that happened before the transition stay excluded.
+            if ($ttrMetric->mode_switched_at !== null
+                && $ttrMetric->used_seconds_at_mode_switch !== null) {
+                $switchedAt = Carbon::parse($ttrMetric->mode_switched_at);
+                $elapsedSinceSwitch = max(0, $checkpointAt->timestamp - $switchedAt->timestamp);
+
+                return max(0, (int) $ttrMetric->used_seconds_at_mode_switch) + $elapsedSinceSwitch;
+            }
+
+            // Backward compatibility for due-driven metrics created before the
+            // transition baseline columns were introduced.
             return $elapsed;
         }
 
