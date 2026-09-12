@@ -23,16 +23,22 @@ class HistoryService
         $ticket = Ticket::where('ticket_id', $ticketId)->first();
         if (!$ticket) {
             return [
-                'priority' => [],
+                'priority' => ['ttr' => [], 'rt' => []],
                 'group' => [],
                 'due_date' => []
             ];
         }
 
+        $priorityStages = $ticket->slaStages()
+            ->whereNotNull('priority_stage_number')
+            ->with('metrics')
+            ->orderBy('sequence_number')
+            ->get();
+
         return [
             'priority' => [
-                'ttr' => $this->buildPriorityTable($ticket, 'ttr'),
-                'rt'  => $this->buildPriorityTable($ticket, 'rt')
+                'ttr' => $this->formatPriorityStages($ticket, $priorityStages, 'ttr'),
+                'rt'  => $this->formatPriorityStages($ticket, $priorityStages, 'rt')
             ],
             'group' => $this->buildGroupTable($ticket),
             'due_date' => $this->buildDueDateTable($ticket)
@@ -40,30 +46,29 @@ class HistoryService
     }
 
     /**
-     * Reconstruct Priority History table.
+     * Reconstruct Priority History table (only stages where priority changes).
      */
-    protected function buildPriorityTable(Ticket $ticket, string $type = 'ttr'): array
+    protected function formatPriorityStages(Ticket $ticket, $stages, string $type): array
     {
-        return $ticket->slaStages()
-            ->with(['metrics' => fn ($query) => $query->where('metric_type', $type)])
-            ->orderBy('sequence_number')
-            ->get()
-            ->map(function ($stage) use ($ticket): array {
-                $metric = $stage->metrics->first();
+        return $stages->map(function ($stage) use ($ticket, $type): array {
+            $metric = $stage->metrics->firstWhere('metric_type', $type);
 
-                return [
-                    'stage' => $stage->priority_stage_number ?? $stage->sequence_number,
-                    'type_priority' => ($ticket->ticket_type ?? 'Ticket') . ' - ' . $stage->priority,
-                    'sla_priority' => $metric ? ($metric->sla_goal_seconds / 3600) . 'h' : '---',
-                    'used_total' => $metric ? $this->formatDuration((int) ($metric->used_at_checkpoint_seconds ?? $metric->used_before_seconds)) : '---',
-                    'extra_time' => $metric && $metric->extra_time_granted_seconds > 0
-                        ? $this->formatDuration($metric->extra_time_granted_seconds)
-                        : '---',
-                    'timestamp' => ($stage->checkpoint_at ?? $stage->opened_at)->format('d-m-Y H:i'),
-                    'status' => ucfirst($metric?->metric_result ?? 'pending'),
-                ];
-            })
-            ->all();
+            return [
+                'stage' => $stage->priority_stage_number,
+                'type_priority' => ($ticket->ticket_type ?? 'Ticket') . ' - ' . $stage->priority,
+                'sla_priority' => $metric ? ($metric->sla_goal_seconds / 3600) . 'h' : '---',
+                'used_total' => $metric ? $this->formatDuration((int) ($metric->used_at_checkpoint_seconds ?? $metric->used_before_seconds)) : '---',
+                'extra_time' => $metric && $metric->extra_time_granted_seconds > 0
+                    ? $this->formatDuration($metric->extra_time_granted_seconds)
+                    : '---',
+                'timestamp' => $stage->opened_at
+                    ? Carbon::parse($stage->opened_at)->timezone('Asia/Ho_Chi_Minh')->format('H:i d/m/Y')
+                    : '---',
+                'status' => $stage->checkpoint_at
+                    ? ucfirst($metric?->metric_result ?? 'pending')
+                    : '---',
+            ];
+        })->all();
     }
 
     /**
@@ -173,6 +178,7 @@ class HistoryService
     protected function buildDueDateTable(Ticket $ticket): array
     {
         $histories = TicketDueDateChange::where('ticket_id', $ticket->ticket_id)
+            ->with(['stage.metrics' => fn ($query) => $query->where('metric_type', 'ttr')])
             ->orderBy('change_number', 'asc')
             ->get();
 
@@ -180,20 +186,23 @@ class HistoryService
             return [];
         }
 
-        $table = [];
-        foreach ($histories as $history) {
-            $table[] = [
+        return $histories->map(function ($history) {
+            $ttrMetric = $history->stage?->metrics->first();
+
+            return [
                 'change_no' => $history->change_number,
-                'new_due_date' => $history->new_due_at ? Carbon::parse($history->new_due_at)->timezone('Asia/Ho_Chi_Minh')->format('d-m-Y H:i') : '-',
+                'new_due_date' => $history->new_due_at
+                    ? Carbon::parse($history->new_due_at)->timezone('Asia/Ho_Chi_Minh')->format('H:i d/m/Y')
+                    : '-',
                 'phase' => $history->processing_phase ?? '-',
                 'reason' => $history->reason_detail ?: $history->reason_code,
-                'timestamp' => Carbon::parse($history->submitted_at)->timezone('Asia/Ho_Chi_Minh')->format('d-m-Y H:i'),
+                'timestamp' => $history->submitted_at
+                    ? Carbon::parse($history->submitted_at)->timezone('Asia/Ho_Chi_Minh')->format('H:i d/m/Y')
+                    : '-',
                 'agent' => $history->agent_name ?? '-',
-                'status' => ucfirst($history->stage?->metrics()->where('metric_type', 'ttr')->value('metric_result') ?? 'pending')
+                'status' => ucfirst($ttrMetric?->metric_result ?? 'pending'),
             ];
-        }
-
-        return $table;
+        })->all();
     }
 
     protected function formatDuration(int $seconds): string
