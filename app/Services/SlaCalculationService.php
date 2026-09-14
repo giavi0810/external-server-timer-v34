@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\TicketEvent;
 use App\Models\Ticket;
+use App\Models\TicketGroupSession;
 use App\Services\Sla\TicketCreatedHandler;
 use App\Services\Sla\StatusChangedHandler;
 use App\Services\Sla\PriorityChangedHandler;
@@ -313,7 +314,7 @@ class SlaCalculationService
 
         if ($changed) {
             $sourceEvent = $startedAt->equalTo($eventAt) ? $event : null;
-            $timerService->startGroupTimer($ticket, $groupLayer, $startedAt, $sourceEvent);
+            $timerService->startGroupTimer($ticket, $groupLayer, $startedAt, $sourceEvent, true);
 
             Log::info('SlaCalculationService: bootstrapped missing running group timer', [
                 'ticket_id' => $ticket->ticket_id,
@@ -338,13 +339,23 @@ class SlaCalculationService
             }
         };
 
-        $rtMetric = $ticket->firstResponseMetric ?: $ticket->getOrCreateFirstResponseMetric();
-        if ($rtMetric->status === 'running' && $rtMetric->started_at) {
-            $assignCandidate(Carbon::parse($rtMetric->started_at));
+        if ($ticket->group_id) {
+            $latestOpenSession = TicketGroupSession::where('ticket_id', $ticket->ticket_id)
+                ->where('group_id', $ticket->group_id)
+                ->whereNull('to_time')
+                ->latest('id')
+                ->first();
+            if ($latestOpenSession && $latestOpenSession->from_time) {
+                $assignCandidate(Carbon::parse($latestOpenSession->from_time));
+            }
         }
 
-        if ($ticket->fd_created_at) {
-            $assignCandidate(Carbon::parse($ticket->fd_created_at));
+        $groupLayer = $timerService->getGroupLayer($ticket->group_id);
+        if ($groupLayer === 'L1') {
+            $rtMetric = $ticket->firstResponseMetric ?: $ticket->getOrCreateFirstResponseMetric();
+            if ($rtMetric->status === 'running' && $rtMetric->started_at) {
+                $assignCandidate(Carbon::parse($rtMetric->started_at));
+            }
         }
 
         return $candidate ? $candidate->copy() : $eventAt->copy();

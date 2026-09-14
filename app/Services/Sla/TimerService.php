@@ -29,12 +29,13 @@ class TimerService
         Ticket $ticket,
         string $layer,
         ?Carbon $at = null,
-        ?TicketEvent $sourceEvent = null
+        ?TicketEvent $sourceEvent = null,
+        bool $force = false
     ): void
     {
         if (
             ! in_array($layer, self::TRACKED_GROUP_LAYERS, true)
-            || ! $ticket->isRunning()
+            || (! $force && ! $ticket->isRunning())
         ) {
             return;
         }
