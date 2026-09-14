@@ -37,6 +37,11 @@ class RocketChatService
             return false;
         }
 
+        if (str_contains($exception->getMessage(), 'failed_jobs_uuid_unique')) {
+            Log::info('RocketChat system alert suppressed for duplicate failed_jobs_uuid_unique');
+            return false;
+        }
+
         self::$isSending = true;
 
         try {
