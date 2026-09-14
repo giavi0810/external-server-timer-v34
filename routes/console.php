@@ -8,10 +8,7 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::command('system-health:redis')
-    ->everyMinute()
-    ->withoutOverlapping(2);
-Schedule::command('system-health:database')
+Schedule::command('system-health:check')
     ->everyMinute()
     ->withoutOverlapping(2);
 Schedule::command('rocketchat-audit:sync --limit=100')
