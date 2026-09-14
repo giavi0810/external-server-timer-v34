@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -51,9 +52,16 @@ return Application::configure(basePath: dirname(__DIR__))
             ]);
         });
 
-        $exceptions->reportable(function (\Throwable $e): void {
+        $exceptions->reportable(function (\Throwable $e): ?bool {
+            if (str_contains($e->getMessage(), 'failed_jobs_uuid_unique')) {
+                Log::info('Duplicate failed_jobs record suppressed from RocketChat alerts (already recorded by parallel worker).');
+                return false;
+            }
+
             if (class_exists(\App\Services\RocketChatService::class)) {
                 app(\App\Services\RocketChatService::class)->sendSystemErrorAlert($e);
             }
+
+            return null;
         });
     })->create();
