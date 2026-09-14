@@ -102,19 +102,14 @@ class GroupChangedHandler
             'event_at'         => $timestamp->toIso8601String(),
         ]);
 
-        $hadActiveTimer = $ticket->groupMetrics()->whereNotNull('started_at')->exists();
-
         $this->timerService->stopAllActiveGroupTimers($ticket, $timestamp, $event);
 
         if ($newGroupId) {
             $ticket->group_id = $newGroupId;
         }
 
-        $effectiveStatus = $ticketData['status'] ?? $ticket->status;
-        $shouldStartTimer = $hadActiveTimer || $this->timerService->isRunStatus($effectiveStatus);
-
-        if ($newLayer && $shouldStartTimer) {
-            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp, $event, true);
+        if ($newLayer && $this->timerService->isRunStatus($ticket->status)) {
+            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp, $event);
         }
 
         $this->timerService->recalculateGroupMetrics($ticket, [], $timestamp);
