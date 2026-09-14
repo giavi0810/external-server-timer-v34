@@ -86,21 +86,23 @@ class GroupChangedHandler
 
         if (!$hasGroupIdChanged && !$hasGroupNameChanged) {
             Log::info("GroupChangedHandler: Bỏ qua vì group không thay đổi ({$oldGroupName})", [
-                'ticket_id'  => $ticketId,
-                'group_id'   => $newGroupId,
+                'ticket_id' => $ticketId,
+                'group_id' => $newGroupId,
                 'group_name' => $newGroupName,
             ]);
             return;
         }
 
         Log::info("GroupChangedHandler: {$oldGroupName} → {$newGroupName}", [
-            'ticket_id'        => $ticketId,
-            'old_group_id'     => $oldGroupId,
-            'new_group_id'     => $newGroupId,
-            'old_layer'        => $oldLayer,
-            'new_layer'        => $newLayer,
-            'event_at'         => $timestamp->toIso8601String(),
+            'ticket_id' => $ticketId,
+            'old_group_id' => $oldGroupId,
+            'new_group_id' => $newGroupId,
+            'old_layer' => $oldLayer,
+            'new_layer' => $newLayer,
+            'event_at' => $timestamp->toIso8601String(),
         ]);
+
+        $hadActiveTimer = $ticket->groupMetrics()->whereNotNull('started_at')->exists();
 
         $this->timerService->stopAllActiveGroupTimers($ticket, $timestamp, $event);
 
@@ -108,8 +110,11 @@ class GroupChangedHandler
             $ticket->group_id = $newGroupId;
         }
 
-        if ($newLayer && $this->timerService->isRunStatus($ticket->status)) {
-            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp, $event);
+        $effectiveStatus = $ticketData['status'] ?? $ticket->status;
+        $shouldStartTimer = $hadActiveTimer || $this->timerService->isRunStatus($effectiveStatus);
+
+        if ($newLayer && $shouldStartTimer) {
+            $this->timerService->startGroupTimer($ticket, $newLayer, $timestamp, $event, true);
         }
 
         $this->timerService->recalculateGroupMetrics($ticket, [], $timestamp);
