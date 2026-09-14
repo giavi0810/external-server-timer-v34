@@ -385,19 +385,23 @@ class RocketChatService
         };
         $cause = $this->describeCause($category, $target, $shortMessage, $rootException);
         $environment = strtoupper((string) config('app.env', 'production'));
-        $fingerprint = $redisError ? $this->redisIncidentFingerprint() : sha1(implode('|', array_filter([
-            $environment,
-            $category,
-            $task,
-            $exception::class,
-            $rootException::class,
-            $sqlState,
-            $target['table'],
-            $target['column'],
-            $target['constraint'],
-            $location,
-            $category === 'system_error' ? $this->fingerprintMessage($shortMessage) : null,
-        ])));
+        $fingerprint = match (true) {
+            $redisError => $this->redisIncidentFingerprint(),
+            $databaseError => $this->databaseIncidentFingerprint(),
+            default => sha1(implode('|', array_filter([
+                $environment,
+                $category,
+                $task,
+                $exception::class,
+                $rootException::class,
+                $sqlState,
+                $target['table'],
+                $target['column'],
+                $target['constraint'],
+                $location,
+                $category === 'system_error' ? $this->fingerprintMessage($shortMessage) : null,
+            ]))),
+        };
 
         return [
             'category' => $category,
