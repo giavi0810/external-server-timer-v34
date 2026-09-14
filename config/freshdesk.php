@@ -150,7 +150,7 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'enable_legacy_ticket_filter' => (bool) env('ENABLE_LEGACY_TICKET_FILTER', false),
+    'enable_legacy_ticket_filter' => (bool) env('ENABLE_LEGACY_TICKET_FILTER', true),
     'go_live_timestamp' => env('GO_LIVE_TIMESTAMP'),
 
 ];

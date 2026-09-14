@@ -23,18 +23,20 @@ services:
             - path: .env
               required: false
         environment:
-            APP_NAME: ${APP_NAME:-Laravel}
+            APP_NAME: ${APP_NAME:-TimerV34}
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY}
             APP_DEBUG: ${APP_DEBUG:-false}
             APP_URL: ${APP_URL:-http://localhost}
             LOG_CHANNEL: ${LOG_CHANNEL:-daily}
             LOG_STACK: ${LOG_STACK:-single}
-            LOG_DAILY_DAYS: ${LOG_DAILY_DAYS:-14}
+            LOG_DAILY_DAYS: ${LOG_DAILY_DAYS:-90}
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
             SESSION_DRIVER: ${SESSION_DRIVER:-file}
+            SESSION_ENCRYPT: ${SESSION_ENCRYPT:-true}
+            SESSION_LIFETIME: ${SESSION_LIFETIME:-720}
             ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
             ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
             DB_CONNECTION: ${DB_CONNECTION:-pgsql}
@@ -56,13 +58,14 @@ services:
             FRESHDESK_WEBHOOK_USER: ${FRESHDESK_WEBHOOK_USER:-admin}
             FRESHDESK_WEBHOOK_PASSWORD: ${FRESHDESK_WEBHOOK_PASSWORD:-}
             FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
-            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
+            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-true}
             GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
             ROCKETCHAT_URL: ${ROCKETCHAT_URL:-http://host.docker.internal:3000}
             ROCKETCHAT_USER_ID: ${ROCKETCHAT_USER_ID:-}
             ROCKETCHAT_TOKEN: ${ROCKETCHAT_TOKEN:-}
             ROCKETCHAT_CHANNEL: ${ROCKETCHAT_CHANNEL:-GENERAL}
             ROCKETCHAT_WEBHOOK_URL: ${ROCKETCHAT_WEBHOOK_URL:-}
+            ROCKETCHAT_AUDIT_RETENTION_DAYS: ${ROCKETCHAT_AUDIT_RETENTION_DAYS:-90}
         extra_hosts:
             - "host.docker.internal:host-gateway"
         volumes:
@@ -137,18 +140,20 @@ services:
             - path: .env
               required: false
         environment:
-            APP_NAME: ${APP_NAME:-Laravel}
+            APP_NAME: ${APP_NAME:-TimerV34}
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY}
             APP_DEBUG: ${APP_DEBUG:-false}
             APP_URL: ${APP_URL:-http://localhost}
             LOG_CHANNEL: ${LOG_CHANNEL:-daily}
             LOG_STACK: ${LOG_STACK:-single}
-            LOG_DAILY_DAYS: ${LOG_DAILY_DAYS:-14}
+            LOG_DAILY_DAYS: ${LOG_DAILY_DAYS:-90}
             LOG_LEVEL: ${LOG_LEVEL:-info}
             CACHE_STORE: ${CACHE_STORE:-redis}
             QUEUE_CONNECTION: ${QUEUE_CONNECTION:-redis}
             SESSION_DRIVER: ${SESSION_DRIVER:-file}
+            SESSION_ENCRYPT: ${SESSION_ENCRYPT:-true}
+            SESSION_LIFETIME: ${SESSION_LIFETIME:-720}
             ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
             ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
             DB_CONNECTION: ${DB_CONNECTION:-pgsql}
@@ -170,13 +175,14 @@ services:
             FRESHDESK_WEBHOOK_USER: ${FRESHDESK_WEBHOOK_USER:-admin}
             FRESHDESK_WEBHOOK_PASSWORD: ${FRESHDESK_WEBHOOK_PASSWORD:-}
             FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
-            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
+            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-true}
             GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
             ROCKETCHAT_URL: ${ROCKETCHAT_URL:-http://host.docker.internal:3000}
             ROCKETCHAT_USER_ID: ${ROCKETCHAT_USER_ID:-}
             ROCKETCHAT_TOKEN: ${ROCKETCHAT_TOKEN:-}
             ROCKETCHAT_CHANNEL: ${ROCKETCHAT_CHANNEL:-GENERAL}
             ROCKETCHAT_WEBHOOK_URL: ${ROCKETCHAT_WEBHOOK_URL:-}
+            ROCKETCHAT_AUDIT_RETENTION_DAYS: ${ROCKETCHAT_AUDIT_RETENTION_DAYS:-90}
         extra_hosts:
             - "host.docker.internal:host-gateway"
         volumes:
@@ -229,7 +235,7 @@ services:
             - path: .env
               required: false
         environment: &worker-environment
-            APP_NAME: ${APP_NAME:-Laravel}
+            APP_NAME: ${APP_NAME:-TimerV34}
             APP_ENV: ${APP_ENV:-production}
             APP_KEY: ${APP_KEY}
             APP_DEBUG: ${APP_DEBUG:-false}
@@ -255,7 +261,7 @@ services:
             FRESHDESK_API_RATE_WINDOW_SECONDS: ${FRESHDESK_API_RATE_WINDOW_SECONDS:-60}
             FRESHDESK_API_RATE_LIMIT_REDIS_CONNECTION: ${FRESHDESK_API_RATE_LIMIT_REDIS_CONNECTION:-default}
             FRESHDESK_REOPEN_THRESHOLD: ${FRESHDESK_REOPEN_THRESHOLD:-1440}
-            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-false}
+            ENABLE_LEGACY_TICKET_FILTER: ${ENABLE_LEGACY_TICKET_FILTER:-true}
             GO_LIVE_TIMESTAMP: ${GO_LIVE_TIMESTAMP:-}
             FRESHDESK_SPOOL_ENABLED: ${FRESHDESK_SPOOL_ENABLED:-true}
             FRESHDESK_REQUIRE_DIRECTORY_FSYNC: ${FRESHDESK_REQUIRE_DIRECTORY_FSYNC:-true}
@@ -263,6 +269,7 @@ services:
             ROCKETCHAT_USER_ID: ${ROCKETCHAT_USER_ID:-}
             ROCKETCHAT_TOKEN: ${ROCKETCHAT_TOKEN:-}
             ROCKETCHAT_CHANNEL: ${ROCKETCHAT_CHANNEL:-GENERAL}
+            ROCKETCHAT_AUDIT_RETENTION_DAYS: ${ROCKETCHAT_AUDIT_RETENTION_DAYS:-90}
         volumes:
             - laravel-v34-storage:/var/www/html/storage
         networks:
