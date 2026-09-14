@@ -279,34 +279,16 @@ class AppTimerSyncService
 
     protected function effectiveRtUsed(TicketFirstResponseMetric $metric): int
     {
-        $used = max(0, (int) $metric->used_seconds);
-        if ($metric->status === 'running' && $metric->started_at) {
-            $used += max(0, now()->timestamp - $metric->started_at->timestamp);
-        }
-
-        return $used;
+        return max(0, (int) $metric->used_seconds);
     }
 
     protected function effectiveGroupUsed(TicketGroupMetric $metric): int
     {
-        $used = max(0, (int) $metric->used_seconds);
-        if ($metric->started_at) {
-            $used += max(0, now()->timestamp - $metric->started_at->timestamp);
-        }
-
-        return $used;
+        return max(0, (int) $metric->used_seconds);
     }
 
     protected function effectiveTtrUsed(Ticket $ticket, TicketTtrMetric $metric): int
     {
-        if ($ticket->isEnded()) {
-            return max(0, (int) $metric->used_seconds);
-        }
-
-        return $this->timerService->calculateTtrUsedSeconds(
-            $ticket,
-            $ticket->getOrCreateStatusMetric(),
-            now()
-        );
+        return max(0, (int) $metric->used_seconds);
     }
 }
