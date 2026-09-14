@@ -397,6 +397,222 @@ class RocketChatAlertStateStore
     }
 
     /**
+     * @return array{
+     *     should_send: bool,
+     *     token: string|null,
+     *     lookup_code: string,
+     *     first_detected_at: int,
+     *     last_detected_at: int,
+     *     occurrence_count: int,
+     *     reminder: bool
+     * }
+     */
+    public function claimDatabaseDown(
+        string $fingerprint,
+        int $reminderSeconds,
+        int $globalRateSeconds
+    ): array {
+        return $this->withLockedState(function (array &$state) use (
+            $fingerprint,
+            $reminderSeconds,
+            $globalRateSeconds
+        ): array {
+            $now = now()->timestamp;
+            $incident = $state['database_incidents'][$fingerprint] ?? [];
+            $newIncident = ($incident['status'] ?? null) !== 'down';
+
+            if ($newIncident) {
+                $incident = [
+                    'status' => 'down',
+                    'lookup_code' => $this->newLookupCode(),
+                    'first_detected_at' => $now,
+                    'last_detected_at' => $now,
+                    'occurrence_count' => 0,
+                    'last_down_alert_at' => null,
+                    'down_alert_sent_at' => null,
+                ];
+            }
+
+            $incident['lookup_code'] ??= $this->newLookupCode();
+
+            if (($incident['claim_kind'] ?? null) === 'recovered') {
+                $staleRecoveryToken = $incident['claim_token'] ?? null;
+                $this->clearIncidentClaim($incident);
+                if ($staleRecoveryToken !== null
+                    && ($state['global']['claim_token'] ?? null) === $staleRecoveryToken
+                ) {
+                    unset($state['global']['claim_token'], $state['global']['claim_expires_at']);
+                }
+            }
+
+            $incident['status'] = 'down';
+            $incident['last_detected_at'] = $now;
+            $incident['occurrence_count'] = (int) ($incident['occurrence_count'] ?? 0) + 1;
+
+            $lastAlertAt = (int) ($incident['last_down_alert_at'] ?? 0);
+            $due = $lastAlertAt === 0 || $lastAlertAt + $reminderSeconds <= $now;
+            $claimAvailable = ($incident['claim_expires_at'] ?? 0) <= $now;
+            $globalAvailable = ($state['global']['last_sent_at'] ?? 0) + $globalRateSeconds <= $now
+                && ($state['global']['claim_expires_at'] ?? 0) <= $now;
+            $token = null;
+
+            if ($due && $claimAvailable && $globalAvailable) {
+                $token = (string) Str::uuid();
+                $expiresAt = $now + $this->claimSeconds();
+                $incident['claim_kind'] = 'down';
+                $incident['claim_token'] = $token;
+                $incident['claim_expires_at'] = $expiresAt;
+                $state['global']['claim_token'] = $token;
+                $state['global']['claim_expires_at'] = $expiresAt;
+            }
+
+            $state['database_incidents'][$fingerprint] = $incident;
+
+            return [
+                'should_send' => $token !== null,
+                'token' => $token,
+                'lookup_code' => (string) $incident['lookup_code'],
+                'first_detected_at' => (int) $incident['first_detected_at'],
+                'last_detected_at' => (int) $incident['last_detected_at'],
+                'occurrence_count' => (int) $incident['occurrence_count'],
+                'reminder' => ! $newIncident,
+            ];
+        });
+    }
+
+    public function completeDatabaseDown(string $fingerprint, string $token): void
+    {
+        $this->withLockedState(function (array &$state) use ($fingerprint, $token): void {
+            $incident = $state['database_incidents'][$fingerprint] ?? null;
+            if (! is_array($incident)
+                || ($incident['claim_kind'] ?? null) !== 'down'
+                || ($incident['claim_token'] ?? null) !== $token
+            ) {
+                return;
+            }
+
+            $now = now()->timestamp;
+            $incident['last_down_alert_at'] = $now;
+            $incident['down_alert_sent_at'] ??= $now;
+            $this->clearIncidentClaim($incident);
+            $state['database_incidents'][$fingerprint] = $incident;
+            $this->completeGlobalClaim($state, $token, $now);
+        });
+    }
+
+    /**
+     * @return array{
+     *     should_send: bool,
+     *     token: string|null,
+     *     lookup_code: string|null,
+     *     first_detected_at: int|null,
+     *     recovered_at: int,
+     *     occurrence_count: int,
+     *     duration_seconds: int
+     * }
+     */
+    public function claimDatabaseRecovered(string $fingerprint, int $globalRateSeconds): array
+    {
+        return $this->withLockedState(function (array &$state) use (
+            $fingerprint,
+            $globalRateSeconds
+        ): array {
+            $now = now()->timestamp;
+            $incident = $state['database_incidents'][$fingerprint] ?? null;
+            $empty = [
+                'should_send' => false,
+                'token' => null,
+                'lookup_code' => null,
+                'first_detected_at' => null,
+                'recovered_at' => $now,
+                'occurrence_count' => 0,
+                'duration_seconds' => 0,
+            ];
+
+            if (! is_array($incident) || ($incident['status'] ?? null) !== 'down') {
+                return $empty;
+            }
+
+            if (($incident['claim_expires_at'] ?? 0) > $now) {
+                return $empty;
+            }
+
+            if (($incident['down_alert_sent_at'] ?? null) === null) {
+                $incident['status'] = 'up';
+                $incident['recovered_at'] = $now;
+                $this->clearIncidentClaim($incident);
+                $state['database_incidents'][$fingerprint] = $incident;
+
+                return $empty;
+            }
+
+            $claimAvailable = ($incident['claim_expires_at'] ?? 0) <= $now;
+            $globalAvailable = ($state['global']['last_sent_at'] ?? 0) + $globalRateSeconds <= $now
+                && ($state['global']['claim_expires_at'] ?? 0) <= $now;
+            $token = null;
+
+            if ($claimAvailable && $globalAvailable) {
+                $token = (string) Str::uuid();
+                $expiresAt = $now + $this->claimSeconds();
+                $incident['claim_kind'] = 'recovered';
+                $incident['claim_token'] = $token;
+                $incident['claim_expires_at'] = $expiresAt;
+                $state['global']['claim_token'] = $token;
+                $state['global']['claim_expires_at'] = $expiresAt;
+                $state['database_incidents'][$fingerprint] = $incident;
+            }
+
+            $firstDetectedAt = (int) ($incident['first_detected_at'] ?? $now);
+
+            return [
+                'should_send' => $token !== null,
+                'token' => $token,
+                'lookup_code' => isset($incident['lookup_code']) ? (string) $incident['lookup_code'] : null,
+                'first_detected_at' => $firstDetectedAt,
+                'recovered_at' => $now,
+                'occurrence_count' => (int) ($incident['occurrence_count'] ?? 0),
+                'duration_seconds' => max(0, $now - $firstDetectedAt),
+            ];
+        });
+    }
+
+    public function completeDatabaseRecovered(string $fingerprint, string $token): void
+    {
+        $this->withLockedState(function (array &$state) use ($fingerprint, $token): void {
+            $incident = $state['database_incidents'][$fingerprint] ?? null;
+            if (! is_array($incident)
+                || ($incident['claim_kind'] ?? null) !== 'recovered'
+                || ($incident['claim_token'] ?? null) !== $token
+            ) {
+                return;
+            }
+
+            $now = now()->timestamp;
+            $incident['status'] = 'up';
+            $incident['recovered_at'] = $now;
+            $incident['recovery_alert_sent_at'] = $now;
+            $this->clearIncidentClaim($incident);
+            $state['database_incidents'][$fingerprint] = $incident;
+            $this->completeGlobalClaim($state, $token, $now);
+        });
+    }
+
+    public function abandonDatabaseClaim(string $fingerprint, string $token): void
+    {
+        $this->withLockedState(function (array &$state) use ($fingerprint, $token): void {
+            $incident = $state['database_incidents'][$fingerprint] ?? null;
+            if (is_array($incident) && ($incident['claim_token'] ?? null) === $token) {
+                $this->clearIncidentClaim($incident);
+                $state['database_incidents'][$fingerprint] = $incident;
+            }
+
+            if (($state['global']['claim_token'] ?? null) === $token) {
+                unset($state['global']['claim_token'], $state['global']['claim_expires_at']);
+            }
+        });
+    }
+
+    /**
      * @template T
      *
      * @param  callable(array<string, mixed>&): T  $callback

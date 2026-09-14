@@ -55,6 +55,8 @@ return [
         ),
         'redis_monitor_enabled' => (bool) env('ROCKETCHAT_REDIS_MONITOR_ENABLED', true),
         'redis_reminder_seconds' => (int) env('ROCKETCHAT_REDIS_REMINDER_SECONDS', 1800),
+        'database_monitor_enabled' => (bool) env('ROCKETCHAT_DATABASE_MONITOR_ENABLED', true),
+        'database_reminder_seconds' => (int) env('ROCKETCHAT_DATABASE_REMINDER_SECONDS', 1800),
     ],
 
     'admin' => [

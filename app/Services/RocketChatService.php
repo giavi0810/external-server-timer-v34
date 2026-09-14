@@ -51,6 +51,10 @@ class RocketChatService
                 return $this->sendRedisDownAlert($exception, $alert);
             }
 
+            if ($alert['category'] === 'database_connection') {
+                return $this->sendDatabaseDownAlert($exception, $alert);
+            }
+
             $incident = $this->claimSystemIncident(
                 $alert['fingerprint'],
                 max(0, (int) config('services.rocketchat.alert_dedup_seconds', 300))
@@ -653,7 +657,7 @@ class RocketChatService
             ->map(static fn ($value, $label) => "{$label}: {$value}")
             ->implode("\n");
 
-        $fingerprintParts = $redisError
+        $fingerprintParts = ($redisError || $databaseError)
             ? [$category, $environment]
             : [
                 $category,
@@ -847,6 +851,149 @@ class RocketChatService
             $this->alertStateStore->completeRedisDown($alert['fingerprint'], $incident['token']);
         } else {
             $this->alertStateStore->abandonRedisClaim($alert['fingerprint'], $incident['token']);
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Called after a successful database ping or query.
+     */
+    public function sendDatabaseRecoveredAlert(): bool
+    {
+        if (self::$isSending) {
+            return false;
+        }
+
+        self::$isSending = true;
+        $fingerprint = $this->databaseIncidentFingerprint();
+
+        try {
+            $incident = $this->alertStateStore->claimDatabaseRecovered(
+                $fingerprint,
+                $this->globalRateSeconds()
+            );
+            if (! $incident['should_send'] || $incident['token'] === null) {
+                return false;
+            }
+
+            $appName = config('app.name', 'External Server Timer V34');
+            $environment = strtoupper((string) config('app.env', 'production'));
+            $duration = $this->humanDuration($incident['duration_seconds']);
+            $text = "### ✅ [KHÔI PHỤC] Kết nối Cơ sở dữ liệu PostgreSQL đã hoạt động lại — {$appName}\n"
+                ."- **Môi trường:** `{$environment}`\n"
+                ."- **Thời gian phục hồi:** {$this->formattedTimestamp()}\n"
+                ."- **Trạng thái:** `RECOVERED`\n"
+                ."- **Thời gian gián đoạn:** {$duration}\n"
+                ."- **Số lỗi đã gộp:** {$incident['occurrence_count']}\n"
+                .'- **Kết quả:** Các tác vụ cơ sở dữ liệu và cronjob có thể tiếp tục xử lý bình thường.';
+            $attachment = [
+                'color' => '#2E7D32',
+                'title' => 'Chi tiết phục hồi',
+                'text' => "Thành phần: PostgreSQL\n"
+                    ."Phát hiện lần đầu: {$this->formattedTimestampFromUnix($incident['first_detected_at'])}\n"
+                    ."Phục hồi: {$this->formattedTimestampFromUnix($incident['recovered_at'])}\n"
+                    ."Số lỗi đã gộp: {$incident['occurrence_count']}",
+            ];
+
+            $sent = $this->sendMessage(
+                $text,
+                $attachment,
+                RocketChatDeliveryStatus::EVENT_POSTGRES_RECOVERED
+            );
+            if ($sent) {
+                $this->alertStateStore->completeDatabaseRecovered($fingerprint, $incident['token']);
+            } else {
+                $this->alertStateStore->abandonDatabaseClaim($fingerprint, $incident['token']);
+            }
+
+            return $sent;
+        } catch (Throwable $exception) {
+            Log::warning('Unable to process RocketChat Database recovery alert', [
+                'error' => $exception->getMessage(),
+            ]);
+
+            return false;
+        } finally {
+            self::$isSending = false;
+        }
+    }
+
+    /**
+     * @param array{
+     *     category: string,
+     *     event_code: string,
+     *     ticket_id: int|null,
+     *     fingerprint: string,
+     *     text: string,
+     *     attachment: array<string, string>
+     * } $alert
+     */
+    private function sendDatabaseDownAlert(Throwable $exception, array $alert): bool
+    {
+        try {
+            $incident = $this->alertStateStore->claimDatabaseDown(
+                $alert['fingerprint'],
+                max(60, (int) config('services.rocketchat.database_reminder_seconds', config('services.rocketchat.redis_reminder_seconds', 1800))),
+                $this->globalRateSeconds()
+            );
+        } catch (Throwable $stateException) {
+            Log::warning('RocketChat file alert state unavailable; using process-local fallback', [
+                'error' => $stateException->getMessage(),
+            ]);
+
+            $claim = $this->claimFallbackNotification(
+                'database-down:'.$alert['fingerprint'],
+                max(60, (int) config('services.rocketchat.database_reminder_seconds', 1800))
+            );
+            $now = now()->timestamp;
+            $timezone = (string) config('services.rocketchat.alert_timezone', 'Asia/Ho_Chi_Minh');
+            $incident = [
+                'should_send' => $claim !== null,
+                'token' => $claim['token'] ?? null,
+                'lookup_code' => 'EVT-'.now($timezone)->format('Ymd-His').'-'.Str::upper(Str::random(6)),
+                'first_detected_at' => $now,
+                'last_detected_at' => $now,
+                'occurrence_count' => 1,
+            ];
+            $alert = $this->renderIncidentAlert($alert, $incident);
+            $this->logSystemIncident($exception, $alert, $incident);
+
+            if ($claim === null) {
+                return false;
+            }
+
+            $sent = $this->sendMessage(
+                $alert['text'],
+                $alert['attachment'],
+                $alert['event_code']
+            );
+            $this->finishAlertNotification($claim, $sent);
+
+            return $sent;
+        }
+
+        $alert = $this->renderIncidentAlert($alert, $incident);
+        $this->logSystemIncident($exception, $alert, $incident);
+
+        if (! $incident['should_send'] || $incident['token'] === null) {
+            Log::debug('Duplicate RocketChat Database DOWN alert suppressed', [
+                'fingerprint' => $alert['fingerprint'],
+                'occurrence_count' => $incident['occurrence_count'],
+            ]);
+
+            return false;
+        }
+
+        $sent = $this->sendMessage(
+            $alert['text'],
+            $alert['attachment'],
+            $alert['event_code']
+        );
+        if ($sent) {
+            $this->alertStateStore->completeDatabaseDown($alert['fingerprint'], $incident['token']);
+        } else {
+            $this->alertStateStore->abandonDatabaseClaim($alert['fingerprint'], $incident['token']);
         }
 
         return $sent;
@@ -1086,6 +1233,13 @@ class RocketChatService
         $environment = strtoupper((string) config('app.env', 'production'));
 
         return sha1("redis_connection|{$environment}");
+    }
+
+    private function databaseIncidentFingerprint(): string
+    {
+        $environment = strtoupper((string) config('app.env', 'production'));
+
+        return sha1("database_connection|{$environment}");
     }
 
     private function globalRateSeconds(): int

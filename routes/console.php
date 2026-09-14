@@ -11,6 +11,9 @@ Artisan::command('inspire', function () {
 Schedule::command('system-health:redis')
     ->everyMinute()
     ->withoutOverlapping(2);
+Schedule::command('system-health:database')
+    ->everyMinute()
+    ->withoutOverlapping(2);
 Schedule::command('rocketchat-audit:sync --limit=100')
     ->everyMinute()
     ->withoutOverlapping(5);
