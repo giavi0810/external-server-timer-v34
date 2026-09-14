@@ -279,7 +279,7 @@ class SystemLogReader
     private function extractIdentifiers(string $raw): array
     {
         $identifiers = [];
-        foreach (['ticket_id', 'receipt_id', 'correlation_id', 'event_id'] as $field) {
+        foreach (['lookup_code', 'ticket_id', 'receipt_id', 'correlation_id', 'event_id'] as $field) {
             if (preg_match('/["\']?'.preg_quote($field, '/').'["\']?\s*[:=]\s*["\']?([a-z0-9_-]+)/i', $raw, $match)) {
                 $identifiers[$field] = $match[1];
             }

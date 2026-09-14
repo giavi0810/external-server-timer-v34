@@ -27,7 +27,7 @@ class MonitorRedisHealthCommand extends Command
             Log::warning('Redis health check failed', [
                 'error' => $exception->getMessage(),
             ]);
-            $rocketChat->sendSystemErrorAlert($exception);
+            $rocketChat->sendSystemErrorAlert($exception, null, 'Giám sát Redis');
         }
 
         return self::SUCCESS;
