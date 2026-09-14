@@ -27,7 +27,11 @@ class RocketChatService
     /**
      * Send a manager-friendly system error notification to Rocket.Chat.
      */
-    public function sendSystemErrorAlert(Throwable $exception, ?int $ticketId = null): bool
+    public function sendSystemErrorAlert(
+        Throwable $exception,
+        ?int $ticketId = null,
+        ?string $task = null
+    ): bool
     {
         if (self::$isSending) {
             return false;
@@ -36,21 +40,26 @@ class RocketChatService
         self::$isSending = true;
 
         try {
-            $alert = $this->buildSystemErrorAlert($exception, $ticketId);
+            $alert = $this->buildIncidentAlert($exception, $ticketId, $task);
 
             if ($alert['category'] === 'redis_connection') {
                 return $this->sendRedisDownAlert($exception, $alert);
             }
 
-            $claim = $this->claimAlertNotification(
-                'system:'.$alert['fingerprint'],
+            $incident = $this->claimSystemIncident(
+                $alert['fingerprint'],
                 max(0, (int) config('services.rocketchat.alert_dedup_seconds', 300))
             );
-            if ($claim === null) {
+            $alert = $this->renderIncidentAlert($alert, $incident);
+            $this->logSystemIncident($exception, $alert, $incident);
+
+            if (! $incident['should_send']) {
                 Log::info('Duplicate RocketChat system alert suppressed', [
                     'fingerprint' => $alert['fingerprint'],
                     'category' => $alert['category'],
                     'ticket_id' => $alert['ticket_id'],
+                    'lookup_code' => $incident['lookup_code'],
+                    'occurrence_count' => $incident['occurrence_count'],
                 ]);
 
                 return false;
@@ -61,7 +70,7 @@ class RocketChatService
                 $alert['attachment'],
                 $alert['event_code']
             );
-            $this->finishAlertNotification($claim, $sent);
+            $this->finishSystemIncident($alert['fingerprint'], $incident, $sent);
 
             return $sent;
         } catch (Throwable $sendException) {
@@ -335,6 +344,233 @@ class RocketChatService
      *     attachment: array<string, string>
      * }
      */
+    /** @return array<string, mixed> */
+    private function buildIncidentAlert(
+        Throwable $exception,
+        ?int $ticketId,
+        ?string $task
+    ): array {
+        $rootException = $this->rootException($exception);
+        $message = $rootException->getMessage() ?: $exception->getMessage() ?: 'Không có mô tả lỗi.';
+        $sqlState = $this->extractSqlState($message) ?: $this->extractSqlState($exception->getMessage());
+        $target = $this->extractDatabaseTarget($message.' '.$exception->getMessage());
+        $location = $this->resolveBusinessLocation($exception);
+        $ticketId ??= $this->resolveTicketId() ?? $this->extractTicketId($exception->getMessage());
+        $task = trim((string) $task) ?: $this->inferTask($exception);
+        $shortMessage = $this->shortErrorMessage($message);
+        $databaseError = $this->isDatabaseConnectionError($exception, $exception->getMessage());
+        $redisError = $this->isRedisConnectionError($exception, $exception->getMessage());
+        $recoverError = str_contains($message, 'recover-processing')
+            || str_contains($message, 'ticket-events:recover-processing');
+
+        $category = match (true) {
+            $redisError => 'redis_connection',
+            $databaseError => 'database_connection',
+            $recoverError => 'recover_processing_error',
+            $sqlState === '23502' => 'database_not_null',
+            $sqlState === '23503' => 'database_foreign_key',
+            $sqlState === '23505' => 'database_duplicate',
+            $sqlState === '22007' => 'database_invalid_datetime',
+            $this->isHttpTimeoutError($message) => 'external_timeout',
+            default => 'system_error',
+        };
+        $cause = $this->describeCause($category, $target, $shortMessage, $rootException);
+        $environment = strtoupper((string) config('app.env', 'production'));
+        $fingerprint = $redisError ? $this->redisIncidentFingerprint() : sha1(implode('|', array_filter([
+            $environment,
+            $category,
+            $task,
+            $exception::class,
+            $rootException::class,
+            $sqlState,
+            $target['table'],
+            $target['column'],
+            $target['constraint'],
+            $location,
+            $category === 'system_error' ? $this->fingerprintMessage($shortMessage) : null,
+        ])));
+
+        return [
+            'category' => $category,
+            'event_code' => match (true) {
+                $redisError => RocketChatDeliveryStatus::EVENT_REDIS_DOWN,
+                $databaseError => RocketChatDeliveryStatus::EVENT_POSTGRES_DOWN,
+                default => RocketChatDeliveryStatus::EVENT_SYSTEM_ERROR,
+            },
+            'environment' => $environment,
+            'task' => $task,
+            'ticket_id' => $ticketId,
+            'cause' => $cause,
+            'fingerprint' => $fingerprint,
+            'technical_details' => array_filter([
+                'Mã lỗi' => $sqlState ?: (string) ($rootException->getCode() ?: $exception->getCode() ?: 'N/A'),
+                'Exception' => $exception::class,
+                'Root exception' => $rootException === $exception ? null : $rootException::class,
+                'Vị trí nghiệp vụ' => $location,
+                'Bảng' => $target['table'],
+                'Cột' => $target['column'],
+                'Ràng buộc' => $target['constraint'],
+                'Trace ID' => $this->resolveTraceId(),
+                'Thông báo gốc' => $shortMessage,
+            ], static fn ($value) => $value !== null && $value !== ''),
+        ];
+    }
+
+    /** @param array<string, mixed> $alert @param array<string, mixed> $incident */
+    private function renderIncidentAlert(array $alert, array $incident): array
+    {
+        $ticket = $alert['ticket_id'] ? (string) $alert['ticket_id'] : 'Không áp dụng';
+        $firstDetected = $this->formattedTimestampFromUnix($incident['first_detected_at']);
+        $lastDetected = $this->formattedTimestampFromUnix($incident['last_detected_at']);
+        $technical = collect($alert['technical_details'])
+            ->map(static fn ($value, $label) => "{$label}: {$value}")
+            ->implode("\n");
+        $appName = config('app.name', 'External Server Timer V34');
+
+        $alert['text'] = "### 🚨 [CẢNH BÁO] Lỗi ứng dụng — {$appName}\n"
+            ."- **Môi trường:** `{$alert['environment']}`\n"
+            ."- **Thời gian:** {$lastDetected}\n"
+            ."- **Tác vụ:** {$alert['task']}\n"
+            ."- **Ticket Freshdesk:** `{$ticket}`\n\n"
+            ."**Nguyên nhân:**\n{$alert['cause']}\n\n"
+            ."- **Mã tra cứu:** `{$incident['lookup_code']}`\n"
+            ."- **Số lần lặp:** {$incident['occurrence_count']}\n"
+            ."- **Lần đầu:** {$firstDetected}\n"
+            ."- **Lần gần nhất:** {$lastDetected}";
+        $alert['attachment'] = [
+            'color' => in_array($alert['category'], ['redis_connection', 'database_connection'], true)
+                ? '#D32F2F'
+                : '#FF8F00',
+            'title' => 'Chi tiết kỹ thuật',
+            'text' => $technical,
+        ];
+
+        return $alert;
+    }
+
+    private function rootException(Throwable $exception): Throwable
+    {
+        $root = $exception;
+        while ($root->getPrevious() !== null) {
+            $root = $root->getPrevious();
+        }
+
+        return $root;
+    }
+
+    /** @return array{table: string|null, column: string|null, constraint: string|null} */
+    private function extractDatabaseTarget(string $message): array
+    {
+        preg_match('/column "([^"]+)"/i', $message, $column);
+        preg_match('/relation "([^"]+)"/i', $message, $table);
+        preg_match('/constraint "([^"]+)"/i', $message, $constraint);
+
+        return [
+            'table' => $table[1] ?? null,
+            'column' => $column[1] ?? null,
+            'constraint' => $constraint[1] ?? null,
+        ];
+    }
+
+    /** @param array{table: string|null, column: string|null, constraint: string|null} $target */
+    private function describeCause(
+        string $category,
+        array $target,
+        string $shortMessage,
+        Throwable $rootException
+    ): string {
+        $field = $target['table'] && $target['column']
+            ? "`{$target['table']}.{$target['column']}`"
+            : ($target['column'] ? "`{$target['column']}`" : 'một trường bắt buộc');
+
+        return match ($category) {
+            'redis_connection' => 'Ứng dụng không thể kết nối tới Redis.',
+            'database_connection' => 'Ứng dụng không thể kết nối tới PostgreSQL.',
+            'recover_processing_error' => "Tiến trình tự động khôi phục hàng chờ thất bại: {$shortMessage}",
+            'database_not_null' => "Không thể lưu dữ liệu vì {$field} đang trống, vi phạm ràng buộc bắt buộc của PostgreSQL.",
+            'database_foreign_key' => 'Không thể lưu dữ liệu vì bản ghi tham chiếu chưa tồn tại hoặc không còn hợp lệ.',
+            'database_duplicate' => 'Không thể lưu dữ liệu vì giá trị đã tồn tại và vi phạm ràng buộc duy nhất.',
+            'database_invalid_datetime' => 'Không thể lưu dữ liệu vì giá trị ngày giờ không đúng định dạng.',
+            'external_timeout' => "Dịch vụ bên ngoài không phản hồi trong thời gian cho phép: {$shortMessage}",
+            default => class_basename($rootException).": {$shortMessage}",
+        };
+    }
+
+    private function shortErrorMessage(string $message): string
+    {
+        $message = preg_replace('/\s+/', ' ', $message) ?: $message;
+        $message = preg_replace('/\s+DETAIL:\s+Failing row contains.*$/i', '', $message) ?: $message;
+        $message = preg_replace('/\s*\(Connection:\s.*$/i', '', $message) ?: $message;
+        $message = preg_replace('/\s+SQL:\s+.*$/i', '', $message) ?: $message;
+        $message = preg_replace('/Bearer\s+[A-Za-z0-9._~+\/-]+=*/i', 'Bearer [REDACTED]', $message) ?: $message;
+        $message = preg_replace('/(["\']?(?:password|token|secret)["\']?\s*[:=]\s*)["\']?[^\s,;}"\']+/i', '$1[REDACTED]', $message) ?: $message;
+
+        return Str::limit(trim($message), 500);
+    }
+
+    private function fingerprintMessage(string $message): string
+    {
+        $message = strtolower($message);
+        $message = preg_replace('/[0-9a-f]{8}-[0-9a-f-]{27,}/i', '{uuid}', $message) ?: $message;
+        $message = preg_replace('/\b[0-9]{2,}\b/', '{n}', $message) ?: $message;
+
+        return Str::limit($message, 300, '');
+    }
+
+    private function resolveBusinessLocation(Throwable $exception): string
+    {
+        $frames = array_merge([[
+            'file' => $exception->getFile(),
+            'line' => $exception->getLine(),
+        ]], $exception->getTrace());
+        $appPath = rtrim(str_replace('\\', '/', app_path()), '/').'/';
+
+        foreach ($frames as $frame) {
+            $file = str_replace('\\', '/', (string) ($frame['file'] ?? ''));
+            if ($file !== '' && str_starts_with($file, $appPath)) {
+                return basename($file).':'.($frame['line'] ?? '?');
+            }
+        }
+
+        return basename($exception->getFile()).':'.$exception->getLine();
+    }
+
+    private function inferTask(Throwable $exception): string
+    {
+        $traceClasses = collect($exception->getTrace())->pluck('class')->filter()->implode('|');
+
+        return match (true) {
+            str_contains($traceClasses, 'PersistFreshdeskWebhookJob'),
+            str_contains($traceClasses, 'WebhookController') => 'Đồng bộ ticket từ Freshdesk',
+            str_contains($traceClasses, 'ProcessTicketEventJob') => 'Xử lý SLA ticket Freshdesk',
+            str_contains($traceClasses, 'RocketChatAudit') => 'Đồng bộ nhật ký Rocket.Chat',
+            str_contains($traceClasses, 'RecoverTicketEventProcessing') => 'Khôi phục hàng chờ xử lý ticket',
+            $this->isRedisConnectionError($exception, $exception->getMessage()) => 'Giám sát Redis',
+            default => 'Xử lý tác vụ ứng dụng',
+        };
+    }
+
+    private function extractTicketId(string $message): ?int
+    {
+        if (preg_match('/["`]ticket_id["`]?\s*=\s*([0-9]+)/i', $message, $matches) === 1) {
+            return (int) $matches[1];
+        }
+        if (preg_match('/relation "tickets".*?Failing row contains \(([0-9]+)/is', $message, $matches) === 1) {
+            return (int) $matches[1];
+        }
+
+        return null;
+    }
+
+    private function isHttpTimeoutError(string $message): bool
+    {
+        $message = strtolower($message);
+
+        return str_contains($message, 'timed out')
+            || str_contains($message, 'timeout was reached')
+            || str_contains($message, 'operation timeout');
+    }
+
     private function buildSystemErrorAlert(Throwable $exception, ?int $ticketId): array
     {
         $message = $exception->getMessage() ?: 'Không có mô tả lỗi.';
@@ -558,6 +794,19 @@ class RocketChatService
                 'redis-down:'.$alert['fingerprint'],
                 max(60, (int) config('services.rocketchat.redis_reminder_seconds', 1800))
             );
+            $now = now()->timestamp;
+            $timezone = (string) config('services.rocketchat.alert_timezone', 'Asia/Ho_Chi_Minh');
+            $incident = [
+                'should_send' => $claim !== null,
+                'token' => $claim['token'] ?? null,
+                'lookup_code' => 'EVT-'.now($timezone)->format('Ymd-His').'-'.Str::upper(Str::random(6)),
+                'first_detected_at' => $now,
+                'last_detected_at' => $now,
+                'occurrence_count' => 1,
+            ];
+            $alert = $this->renderIncidentAlert($alert, $incident);
+            $this->logSystemIncident($exception, $alert, $incident);
+
             if ($claim === null) {
                 return false;
             }
@@ -572,6 +821,9 @@ class RocketChatService
             return $sent;
         }
 
+        $alert = $this->renderIncidentAlert($alert, $incident);
+        $this->logSystemIncident($exception, $alert, $incident);
+
         if (! $incident['should_send'] || $incident['token'] === null) {
             Log::debug('Duplicate RocketChat Redis DOWN alert suppressed', [
                 'fingerprint' => $alert['fingerprint'],
@@ -580,16 +832,6 @@ class RocketChatService
 
             return false;
         }
-
-        $status = $incident['reminder'] ? 'DOWN — NHẮC LẠI' : 'DOWN';
-        $alert['text'] = str_replace(
-            '- **Trạng thái:** Cần kiểm tra',
-            "- **Trạng thái:** `{$status}`",
-            $alert['text']
-        );
-        $alert['attachment']['text'] .= "\nPhát hiện lần đầu: "
-            .$this->formattedTimestampFromUnix($incident['first_detected_at'])
-            ."\nSố lỗi đã gộp: {$incident['occurrence_count']}";
 
         $sent = $this->sendMessage(
             $alert['text'],
@@ -659,7 +901,8 @@ class RocketChatService
 
         $request = request();
 
-        return $request->header('X-Trace-ID')
+        return $request->attributes->get('trace_id')
+            ?: $request->header('X-Trace-ID')
             ?: $request->header('X-Correlation-ID')
             ?: $request->header('X-Request-ID');
     }
@@ -682,6 +925,78 @@ class RocketChatService
         return Carbon::createFromTimestampUTC($timestamp)
             ->timezone($timezone)
             ->format('d/m/Y H:i:s').' (GMT+7)';
+    }
+
+    /** @return array<string, mixed> */
+    private function claimSystemIncident(string $fingerprint, int $dedupSeconds): array
+    {
+        try {
+            return ['backend' => 'file'] + $this->alertStateStore->claimSystemIncident(
+                $fingerprint,
+                $dedupSeconds,
+                $this->globalRateSeconds()
+            );
+        } catch (Throwable $stateException) {
+            Log::warning('RocketChat incident state unavailable; using process-local fallback', [
+                'error' => $stateException->getMessage(),
+            ]);
+            $claim = $this->claimFallbackNotification('system:'.$fingerprint, $dedupSeconds);
+            $now = now()->timestamp;
+            $timezone = (string) config('services.rocketchat.alert_timezone', 'Asia/Ho_Chi_Minh');
+
+            return [
+                'backend' => 'memory',
+                'should_send' => $claim !== null,
+                'token' => $claim['token'] ?? null,
+                'lookup_code' => 'EVT-'.now($timezone)->format('Ymd-His').'-'.Str::upper(Str::random(6)),
+                'first_detected_at' => $now,
+                'last_detected_at' => $now,
+                'occurrence_count' => 1,
+                'fallback_claim' => $claim,
+            ];
+        }
+    }
+
+    /** @param array<string, mixed> $incident */
+    private function finishSystemIncident(string $fingerprint, array $incident, bool $sent): void
+    {
+        if (($incident['backend'] ?? null) === 'file' && is_string($incident['token'] ?? null)) {
+            try {
+                if ($sent) {
+                    $this->alertStateStore->completeSystemIncident($fingerprint, $incident['token']);
+                } else {
+                    $this->alertStateStore->abandonSystemIncident($fingerprint, $incident['token']);
+                }
+            } catch (Throwable $stateException) {
+                Log::warning('Unable to finalize RocketChat system incident state', [
+                    'lookup_code' => $incident['lookup_code'] ?? null,
+                    'error' => $stateException->getMessage(),
+                ]);
+            }
+
+            return;
+        }
+
+        if (is_array($incident['fallback_claim'] ?? null)) {
+            $this->finishAlertNotification($incident['fallback_claim'], $sent);
+        }
+    }
+
+    /** @param array<string, mixed> $alert @param array<string, mixed> $incident */
+    private function logSystemIncident(Throwable $exception, array $alert, array $incident): void
+    {
+        Log::error('Application error incident detected', [
+            'lookup_code' => $incident['lookup_code'],
+            'fingerprint' => $alert['fingerprint'],
+            'occurrence_count' => $incident['occurrence_count'],
+            'first_detected_at' => $incident['first_detected_at'],
+            'last_detected_at' => $incident['last_detected_at'],
+            'task' => $alert['task'],
+            'ticket_id' => $alert['ticket_id'],
+            'category' => $alert['category'],
+            'technical_details' => $alert['technical_details'],
+            'exception' => $exception,
+        ]);
     }
 
     /**

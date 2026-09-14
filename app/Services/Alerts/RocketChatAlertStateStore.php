@@ -8,6 +8,108 @@ use RuntimeException;
 class RocketChatAlertStateStore
 {
     /**
+     * Record every occurrence and reserve a Rocket.Chat notification when due.
+     *
+     * @return array{
+     *     should_send: bool,
+     *     token: string|null,
+     *     lookup_code: string,
+     *     first_detected_at: int,
+     *     last_detected_at: int,
+     *     occurrence_count: int
+     * }
+     */
+    public function claimSystemIncident(
+        string $fingerprint,
+        int $dedupSeconds,
+        int $globalRateSeconds
+    ): array {
+        return $this->withLockedState(function (array &$state) use (
+            $fingerprint,
+            $dedupSeconds,
+            $globalRateSeconds
+        ): array {
+            $now = now()->timestamp;
+            $incident = $state['system_incidents'][$fingerprint] ?? null;
+            $retentionSeconds = max(
+                3600,
+                (int) config('services.rocketchat.alert_state_retention_seconds', 604800)
+            );
+
+            if (! is_array($incident)
+                || (int) ($incident['last_detected_at'] ?? 0) + $retentionSeconds < $now
+            ) {
+                $incident = [
+                    'lookup_code' => $this->newLookupCode(),
+                    'first_detected_at' => $now,
+                    'last_detected_at' => $now,
+                    'occurrence_count' => 0,
+                    'last_sent_at' => null,
+                ];
+            }
+
+            $incident['last_detected_at'] = $now;
+            $incident['occurrence_count'] = (int) ($incident['occurrence_count'] ?? 0) + 1;
+            $due = (int) ($incident['last_sent_at'] ?? 0) + $dedupSeconds <= $now;
+            $claimAvailable = (int) ($incident['claim_expires_at'] ?? 0) <= $now;
+            $globalAvailable = (int) ($state['global']['last_sent_at'] ?? 0) + $globalRateSeconds <= $now
+                && (int) ($state['global']['claim_expires_at'] ?? 0) <= $now;
+            $token = null;
+
+            if ($due && $claimAvailable && $globalAvailable) {
+                $token = (string) Str::uuid();
+                $expiresAt = $now + $this->claimSeconds();
+                $incident['claim_token'] = $token;
+                $incident['claim_expires_at'] = $expiresAt;
+                $state['global']['claim_token'] = $token;
+                $state['global']['claim_expires_at'] = $expiresAt;
+            }
+
+            $state['system_incidents'][$fingerprint] = $incident;
+
+            return [
+                'should_send' => $token !== null,
+                'token' => $token,
+                'lookup_code' => (string) $incident['lookup_code'],
+                'first_detected_at' => (int) $incident['first_detected_at'],
+                'last_detected_at' => (int) $incident['last_detected_at'],
+                'occurrence_count' => (int) $incident['occurrence_count'],
+            ];
+        });
+    }
+
+    public function completeSystemIncident(string $fingerprint, string $token): void
+    {
+        $this->withLockedState(function (array &$state) use ($fingerprint, $token): void {
+            $incident = $state['system_incidents'][$fingerprint] ?? null;
+            if (! is_array($incident) || ($incident['claim_token'] ?? null) !== $token) {
+                return;
+            }
+
+            $now = now()->timestamp;
+            $incident['last_sent_at'] = $now;
+            unset($incident['claim_token'], $incident['claim_expires_at']);
+            $state['system_incidents'][$fingerprint] = $incident;
+            $this->completeGlobalClaim($state, $token, $now);
+        });
+    }
+
+    public function abandonSystemIncident(string $fingerprint, string $token): void
+    {
+        $this->withLockedState(function (array &$state) use ($fingerprint, $token): void {
+            $incident = $state['system_incidents'][$fingerprint] ?? null;
+            if (is_array($incident) && ($incident['claim_token'] ?? null) === $token) {
+                unset($incident['claim_token'], $incident['claim_expires_at']);
+                $state['system_incidents'][$fingerprint] = $incident;
+            }
+
+            if (($state['global']['claim_token'] ?? null) === $token) {
+                unset($state['global']['claim_token'], $state['global']['claim_expires_at']);
+            }
+        });
+    }
+
+    /**
      * @return array{token: string}|null
      */
     public function claimNotification(string $key, int $dedupSeconds, int $globalRateSeconds): ?array
@@ -82,6 +184,7 @@ class RocketChatAlertStateStore
      * @return array{
      *     should_send: bool,
      *     token: string|null,
+     *     lookup_code: string,
      *     first_detected_at: int,
      *     last_detected_at: int,
      *     occurrence_count: int,
@@ -105,6 +208,7 @@ class RocketChatAlertStateStore
             if ($newIncident) {
                 $incident = [
                     'status' => 'down',
+                    'lookup_code' => $this->newLookupCode(),
                     'first_detected_at' => $now,
                     'last_detected_at' => $now,
                     'occurrence_count' => 0,
@@ -112,6 +216,8 @@ class RocketChatAlertStateStore
                     'down_alert_sent_at' => null,
                 ];
             }
+
+            $incident['lookup_code'] ??= $this->newLookupCode();
 
             if (($incident['claim_kind'] ?? null) === 'recovered') {
                 $staleRecoveryToken = $incident['claim_token'] ?? null;
@@ -149,6 +255,7 @@ class RocketChatAlertStateStore
             return [
                 'should_send' => $token !== null,
                 'token' => $token,
+                'lookup_code' => (string) $incident['lookup_code'],
                 'first_detected_at' => (int) $incident['first_detected_at'],
                 'last_detected_at' => (int) $incident['last_detected_at'],
                 'occurrence_count' => (int) $incident['occurrence_count'],
@@ -181,6 +288,7 @@ class RocketChatAlertStateStore
      * @return array{
      *     should_send: bool,
      *     token: string|null,
+     *     lookup_code: string|null,
      *     first_detected_at: int|null,
      *     recovered_at: int,
      *     occurrence_count: int,
@@ -198,6 +306,7 @@ class RocketChatAlertStateStore
             $empty = [
                 'should_send' => false,
                 'token' => null,
+                'lookup_code' => null,
                 'first_detected_at' => null,
                 'recovered_at' => $now,
                 'occurrence_count' => 0,
@@ -242,6 +351,7 @@ class RocketChatAlertStateStore
             return [
                 'should_send' => $token !== null,
                 'token' => $token,
+                'lookup_code' => isset($incident['lookup_code']) ? (string) $incident['lookup_code'] : null,
                 'first_detected_at' => $firstDetectedAt,
                 'recovered_at' => $now,
                 'occurrence_count' => (int) ($incident['occurrence_count'] ?? 0),
@@ -328,15 +438,15 @@ class RocketChatAlertStateStore
     private function readState(string $statePath): array
     {
         if (! is_file($statePath)) {
-            return ['version' => 1, 'global' => [], 'notifications' => [], 'redis_incidents' => []];
+            return ['version' => 1, 'global' => [], 'notifications' => [], 'system_incidents' => [], 'redis_incidents' => []];
         }
 
         $json = file_get_contents($statePath);
         $state = $json !== false ? json_decode($json, true) : null;
 
         return is_array($state)
-            ? $state + ['version' => 1, 'global' => [], 'notifications' => [], 'redis_incidents' => []]
-            : ['version' => 1, 'global' => [], 'notifications' => [], 'redis_incidents' => []];
+            ? $state + ['version' => 1, 'global' => [], 'notifications' => [], 'system_incidents' => [], 'redis_incidents' => []]
+            : ['version' => 1, 'global' => [], 'notifications' => [], 'system_incidents' => [], 'redis_incidents' => []];
     }
 
     /**
@@ -435,6 +545,30 @@ class RocketChatAlertStateStore
                 unset($state['redis_incidents'][$key]);
             }
         }
+
+        foreach (($state['system_incidents'] ?? []) as $key => $incident) {
+            if (! is_array($incident)) {
+                unset($state['system_incidents'][$key]);
+
+                continue;
+            }
+
+            $lastActivityAt = max(
+                (int) ($incident['last_detected_at'] ?? 0),
+                (int) ($incident['last_sent_at'] ?? 0),
+                (int) ($incident['claim_expires_at'] ?? 0)
+            );
+            if ($lastActivityAt > 0 && $lastActivityAt + $retentionSeconds < $now) {
+                unset($state['system_incidents'][$key]);
+            }
+        }
+    }
+
+    private function newLookupCode(): string
+    {
+        $timezone = (string) config('services.rocketchat.alert_timezone', 'Asia/Ho_Chi_Minh');
+
+        return 'EVT-'.now($timezone)->format('Ymd-His').'-'.Str::upper(Str::random(6));
     }
 
     private function claimSeconds(): int

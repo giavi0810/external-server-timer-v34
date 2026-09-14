@@ -22,6 +22,9 @@ class TraceIdMiddleware
             ?: $request->header('X-Request-ID')
             ?: (string) Str::uuid();
 
+        $request->headers->set('X-Trace-ID', $traceId);
+        $request->attributes->set('trace_id', $traceId);
+
         Log::withContext([
             'trace_id' => $traceId,
         ]);

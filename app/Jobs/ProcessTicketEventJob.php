@@ -321,7 +321,11 @@ class ProcessTicketEventJob implements ShouldQueue
 
         if (class_exists(\App\Services\RocketChatService::class)) {
             try {
-                app(\App\Services\RocketChatService::class)->sendSystemErrorAlert($exception, $this->ticketId);
+                app(\App\Services\RocketChatService::class)->sendSystemErrorAlert(
+                    $exception,
+                    $this->ticketId,
+                    'Xử lý SLA ticket Freshdesk'
+                );
             } catch (\Throwable $e) {
                 Log::warning('Failed to dispatch RocketChat alert on job failure', ['error' => $e->getMessage()]);
             }

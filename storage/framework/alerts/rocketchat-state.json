@@ -8,5 +8,21 @@
         "queue:b68437f94389b9b6e4be09305886d475638d359d": [],
         "system:3264db4bef3c6cfb786c42dc41d9a3280d9f17e6": []
     },
-    "redis_incidents": []
+    "redis_incidents": [],
+    "system_incidents": {
+        "805f04b4a2a793ebd12d2cabfc69b8f3a61347dd": {
+            "lookup_code": "EVT-20260914-091204-DWZNUT",
+            "first_detected_at": 1789351924,
+            "last_detected_at": 1789352344,
+            "occurrence_count": 8,
+            "last_sent_at": null
+        },
+        "535b9ac8a061a13fe5000b22c2bfdb070e12beb1": {
+            "lookup_code": "EVT-20260914-091204-PJDBG0",
+            "first_detected_at": 1789351924,
+            "last_detected_at": 1789352344,
+            "occurrence_count": 8,
+            "last_sent_at": null
+        }
+    }
 }
