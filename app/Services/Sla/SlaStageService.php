@@ -4,6 +4,8 @@ namespace App\Services\Sla;
 
 use App\Models\Ticket;
 use App\Models\TicketEvent;
+
+use App\Models\TicketGroupSession;
 use App\Models\TicketSlaStage;
 use Carbon\Carbon;
 
@@ -71,14 +73,19 @@ class SlaStageService
                 $failed = $exceededSla || $exceededDue;
             }
 
+            $overdueAt = $failed ? ($effectiveDueAt ?? $dueAt ?? $checkpointAt) : null;
+            $overdueOwnerGroupId = $failed
+                ? $this->resolveOverdueOwnerGroupId($ticket, $overdueAt, $metric->overdue_owner_group_id)
+                : null;
+
             $metric->update([
                 'used_at_checkpoint_seconds' => $usedSeconds,
                 'metric_result' => ($dueAt || $effectiveSla > 0) ? ($failed ? 'fail' : 'pass') : 'not_applicable',
                 'result_reason' => ($dueAt || $effectiveSla > 0)
                     ? $context . ($failed ? '_after_due' : '_before_due')
                     : 'due_date_not_available',
-                'overdue_at' => $failed ? ($effectiveDueAt ?? $dueAt ?? $checkpointAt) : null,
-                'overdue_owner_group_id' => $failed ? $ticket->group_id : null,
+                'overdue_at' => $overdueAt,
+                'overdue_owner_group_id' => $overdueOwnerGroupId,
             ]);
         }
 
@@ -88,5 +95,37 @@ class SlaStageService
         ]);
 
         return $stage;
+    }
+
+    /**
+     * Xác định Đơn vị chịu trách nhiệm vi phạm (Overdue Owner) theo BR-GRP-05.
+     * Giá trị mang tính lịch sử bất biến và không bị thay đổi ngay cả khi ticket chuyển group sau đó.
+     */
+    protected function resolveOverdueOwnerGroupId(
+        Ticket $ticket,
+        ?Carbon $overdueAt,
+        ?string $existingOwnerGroupId
+    ): ?string {
+        if ($existingOwnerGroupId !== null && $existingOwnerGroupId !== '') {
+            return $existingOwnerGroupId;
+        }
+
+        if ($overdueAt) {
+            $session = TicketGroupSession::query()
+                ->where('ticket_id', $ticket->ticket_id)
+                ->where('from_time', '<=', $overdueAt)
+                ->where(function ($query) use ($overdueAt) {
+                    $query->whereNull('to_time')
+                        ->orWhere('to_time', '>=', $overdueAt);
+                })
+                ->latest('from_time')
+                ->first();
+
+            if ($session && $session->group_id) {
+                return (string) $session->group_id;
+            }
+        }
+
+        return $ticket->group_id ? (string) $ticket->group_id : null;
     }
 }
