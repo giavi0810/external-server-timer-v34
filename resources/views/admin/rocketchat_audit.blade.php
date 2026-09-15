@@ -143,10 +143,26 @@
                                         </div>
                                     </div>
                                     <div>
-                                        <span class="text-slate-500 font-bold uppercase block mb-1">Thông Báo Lỗi (Error Details):</span>
-                                        <div class="bg-rose-50/60 p-2.5 rounded border border-rose-200 font-mono text-rose-800 min-h-[60px] max-h-36 overflow-y-auto whitespace-pre-wrap">
-                                            {{ $log->error_message ?? 'Không có lỗi (Gửi thành công)' }}
-                                        </div>
+                                        <span class="text-slate-500 font-bold uppercase block mb-1">
+                                            @if(strtoupper($log->status) === 'SUCCESS')
+                                                Chi Tiết Thực Hiện (Execution Details):
+                                            @else
+                                                Thông Báo Lỗi (Error Details):
+                                            @endif
+                                        </span>
+                                        @if(strtoupper($log->status) === 'SUCCESS')
+                                            <div class="bg-emerald-50/70 p-2.5 rounded border border-emerald-200 font-mono text-emerald-800 min-h-[60px] max-h-36 overflow-y-auto whitespace-pre-wrap">
+                                                {{ $log->error_details }}
+                                            </div>
+                                        @elseif(strtoupper($log->status) === 'FAILED')
+                                            <div class="bg-rose-50/70 p-2.5 rounded border border-rose-200 font-mono text-rose-800 min-h-[60px] max-h-36 overflow-y-auto whitespace-pre-wrap">
+                                                {{ $log->error_details }}
+                                            </div>
+                                        @else
+                                            <div class="bg-amber-50/70 p-2.5 rounded border border-amber-200 font-mono text-amber-800 min-h-[60px] max-h-36 overflow-y-auto whitespace-pre-wrap">
+                                                {{ $log->error_details }}
+                                            </div>
+                                        @endif
                                     </div>
                                 </div>
                             </td>
