@@ -110,7 +110,8 @@ class LogMonitorController extends Controller
             $query = RocketChatDeliveryStatus::query();
 
             if ($request->filled('status')) {
-                $query->where('status', $request->input('status'));
+                $status = strtolower(trim((string) $request->input('status')));
+                $query->whereRaw('LOWER(status) = ?', [$status]);
             }
 
             if ($request->filled('event_code')) {
@@ -284,7 +285,8 @@ class LogMonitorController extends Controller
         $query = RocketChatDeliveryStatus::query();
 
         if ($request->filled('status')) {
-            $query->where('status', $request->input('status'));
+            $status = strtolower(trim((string) $request->input('status')));
+            $query->whereRaw('LOWER(status) = ?', [$status]);
         }
         if ($request->filled('event_code')) {
             $query->where('event_code', $request->input('event_code'));
@@ -335,7 +337,7 @@ class LogMonitorController extends Controller
                     $log->rocketchat_message_id ?? '',
                     $log->attempt_count,
                     $log->formatted_attempted_at,
-                    $log->error_message ?? '',
+                    $log->error_details ?? '',
                 ]);
             }
             fclose($file);

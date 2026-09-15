@@ -35,9 +35,9 @@
                 <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Trạng thái</label>
                 <select name="status" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500 font-medium">
                     <option value="">-- Tất cả trạng thái --</option>
-                    <option value="SUCCESS" {{ request('status') == 'SUCCESS' ? 'selected' : '' }}>SUCCESS (Thành công)</option>
-                    <option value="FAILED" {{ request('status') == 'FAILED' ? 'selected' : '' }}>FAILED (Thất bại)</option>
-                    <option value="UNKNOWN" {{ request('status') == 'UNKNOWN' ? 'selected' : '' }}>UNKNOWN (Không rõ)</option>
+                    <option value="SUCCESS" {{ strtoupper(request('status')) === 'SUCCESS' ? 'selected' : '' }}>SUCCESS (Thành công)</option>
+                    <option value="FAILED" {{ strtoupper(request('status')) === 'FAILED' ? 'selected' : '' }}>FAILED (Thất bại)</option>
+                    <option value="UNKNOWN" {{ strtoupper(request('status')) === 'UNKNOWN' ? 'selected' : '' }}>UNKNOWN (Không rõ)</option>
                 </select>
             </div>
 
