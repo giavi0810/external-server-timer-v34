@@ -65,6 +65,7 @@ class TicketReplayService
                 'resolved_at' => null,
                 'closed_at' => null,
                 'reopened_at' => null,
+                'final_sla_compliant' => null,
             ])->save();
 
             TicketEvent::query()->where('ticket_id', $ticketId)->update([

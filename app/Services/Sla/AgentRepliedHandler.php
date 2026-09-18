@@ -44,7 +44,8 @@ class AgentRepliedHandler
             return;
         }
 
-        if (!$rtMetric->hasFirstResponse()) {
+        if (!$rtMetric->hasFirstResponse()
+            && !in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'], true)) {
             $rtMetric->first_response_at = $now;
 
             $this->timerService->finalizeRtUsedTime($rtMetric, $now);

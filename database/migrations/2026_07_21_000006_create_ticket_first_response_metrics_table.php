@@ -30,6 +30,18 @@ return new class extends Migration
         if (DB::getDriverName() === 'pgsql') {
             DB::statement("ALTER TABLE ticket_first_response_metrics ADD CONSTRAINT ticket_first_response_status_check CHECK (status IN ('running', 'paused', 'ended_replied', 'ended_closed_no_reply'))");
             DB::statement('ALTER TABLE ticket_first_response_metrics ADD CONSTRAINT ticket_first_response_counts_check CHECK (LEAST(total_seconds, used_seconds, agent_reply_count, requester_reply_count) >= 0)');
+            DB::statement(<<<'SQL'
+                CREATE INDEX ticket_rt_overdue_scan_index
+                ON ticket_first_response_metrics (latest_due_date_rt, ticket_id)
+                WHERE status = 'running' AND first_response_at IS NULL
+                SQL);
+        } else {
+            Schema::table('ticket_first_response_metrics', function (Blueprint $table) {
+                $table->index(
+                    ['status', 'latest_due_date_rt', 'ticket_id'],
+                    'ticket_rt_overdue_scan_index'
+                );
+            });
         }
     }
 

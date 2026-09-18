@@ -7,6 +7,7 @@ use App\Models\Ticket;
 use App\Models\TicketLogicOutbox;
 use App\Models\FreshdeskOutboundOperation;
 use App\Services\Sla\TicketReplayService;
+use App\Services\Sla\SlaComplianceService;
 use App\Services\SlaCalculationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -266,6 +267,10 @@ class ProcessTicketEventJob implements ShouldQueue
                         'event_id' => $event->id,
                     ]);
                     break;
+            }
+
+            if (TicketEvent::isSupportedType($event->event_type)) {
+                app(SlaComplianceService::class)->captureEvent($event);
             }
 
             $event->markAsProcessed();

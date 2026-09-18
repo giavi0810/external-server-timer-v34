@@ -117,7 +117,9 @@ class DueDateChangedHandler
         }
 
         $ttrMetric->latest_due_date_ttr = $newDue;
-        if ($newFrDue) {
+        if ($newFrDue
+            && !$rtMetric->hasFirstResponse()
+            && !in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'], true)) {
             $rtMetric->latest_due_date_rt = $newFrDue;
         }
 
