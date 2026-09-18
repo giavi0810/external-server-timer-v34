@@ -92,7 +92,10 @@ class SlaComplianceService
         }
 
         $exceededUsed = $used > max(0, (int) $metric->total_seconds);
-        $exceededDue = $metric->latest_due_date_rt
+        $deadlineEvaluationActive = $metric->status === 'running'
+            || $metric->status === 'ended_closed_no_reply';
+        $exceededDue = $deadlineEvaluationActive
+            && $metric->latest_due_date_rt
             && $at->greaterThan(Carbon::parse($metric->latest_due_date_rt));
 
         return $exceededUsed || (! $metric->hasFirstResponse() && $exceededDue);

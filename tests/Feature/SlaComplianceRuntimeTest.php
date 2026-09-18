@@ -39,6 +39,40 @@ class SlaComplianceRuntimeTest extends TestCase
         $this->assertFalse(app(SlaComplianceService::class)->currentRtOverdue($ticket->fresh()));
     }
 
+    public function test_rt_due_date_does_not_advance_while_paused(): void
+    {
+        $ticket = $this->ticket(92011, 'Pending');
+        $metric = $ticket->getOrCreateFirstResponseMetric();
+        $metric->update([
+            'total_seconds' => 3600,
+            'used_seconds' => 300,
+            'status' => 'paused',
+            'started_at' => null,
+            'latest_due_date_rt' => '2026-09-01 09:00:00',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'total_seconds' => 86400,
+            'used_seconds' => 0,
+            'latest_due_date_ttr' => '2026-09-02 08:00:00',
+        ]);
+        $service = app(SlaComplianceService::class);
+
+        $snapshot = $service->captureCurrent(
+            $ticket,
+            Carbon::parse('2026-09-01 10:00:00')
+        );
+
+        $this->assertFalse($snapshot['rt']);
+        $this->assertFalse($ticket->fresh()->sla_violated);
+
+        $metric->update(['used_seconds' => 3601]);
+
+        $this->assertTrue($service->currentRtOverdue(
+            $ticket->fresh(),
+            Carbon::parse('2026-09-01 10:00:00')
+        ));
+    }
+
     public function test_sla_violation_stays_failed_after_live_rt_returns_to_no(): void
     {
         $ticket = $this->ticket(92002);
