@@ -18,6 +18,8 @@ class Ticket extends Model
         'priority', 'ticket_type', 'group_id', 'requester_id', 'fd_created_at',
         'resolved_at', 'closed_at', 'reopened_at',
         'fd_updated_at',
+        'sla_violated', 'sla_violated_at', 'sla_violation_metric',
+        'final_sla_compliant',
     ];
 
     protected $casts = [
@@ -29,6 +31,9 @@ class Ticket extends Model
         'closed_at' => 'datetime',
         'reopened_at' => 'datetime',
         'fd_updated_at' => 'datetime',
+        'sla_violated' => 'boolean',
+        'sla_violated_at' => 'datetime',
+        'final_sla_compliant' => 'boolean',
     ];
 
     public function sourceTicket(): BelongsTo

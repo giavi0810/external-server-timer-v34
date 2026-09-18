@@ -145,7 +145,7 @@ class ResolutionTimerLifecycleTest extends TestCase
         $this->assertNull($statusMetric->resolution_started_at);
     }
 
-    public function test_due_driven_reopen_does_not_add_closed_duration_to_resolution_time(): void
+    public function test_due_driven_reopen_adds_closed_duration_to_resolution_time(): void
     {
         $ticket = Ticket::create([
             'ticket_id' => 77777,
@@ -155,7 +155,10 @@ class ResolutionTimerLifecycleTest extends TestCase
             'group_id' => 101,
             'fd_created_at' => '2026-09-01 08:00:00',
         ]);
-        $ticket->getOrCreateTtrMetric()->update(['processing_mode' => 'due-driven']);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'due-driven',
+            'total_seconds' => 72000,
+        ]);
 
         $handler = app(StatusChangedHandler::class);
 
@@ -171,8 +174,8 @@ class ResolutionTimerLifecycleTest extends TestCase
         $handler->handle($ticket->ticket_id, ['status' => 3], [['field' => 'status', 'old_value' => 'Closed', 'new_value' => 'Processing']], $event2);
 
         $statusMetric = $ticket->fresh()->getOrCreateStatusMetric();
-        // Thời gian đóng 3 ngày KHÔNG được cộng vào resolution_total_seconds
-        $this->assertSame(3600, $statusMetric->resolution_total_seconds, 'Thời gian vé đóng không được cộng vào resolution_total_seconds dù là due-driven');
+        // Due-driven: thời gian End 3 ngày PHẢI được cộng vào resolution_total_seconds.
+        $this->assertSame(3600 + (3 * 86400), $statusMetric->resolution_total_seconds);
         $this->assertNotNull($statusMetric->resolution_started_at);
         $this->assertSame('2026-09-04 09:00:00', Carbon::parse($statusMetric->resolution_started_at)->format('Y-m-d H:i:s'));
     }
@@ -205,6 +208,34 @@ class ResolutionTimerLifecycleTest extends TestCase
         // Theo Closed precedence (BRD BR-STA-02), khoảng Resolved -> Closed được cộng vào Resolution Time
         $this->assertSame(3600 + 5400, $statusMetric->resolution_total_seconds, 'Khoảng Resolved -> Closed phải được cộng vào Resolution Time');
         $this->assertNull($statusMetric->resolution_started_at);
+    }
+
+    public function test_due_driven_resolved_closed_reopen_does_not_double_count_resolution(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 88889,
+            'status' => 'Open',
+            'priority' => 'Medium',
+            'ticket_type' => 'Default',
+            'group_id' => 101,
+            'fd_created_at' => '2026-09-01 08:00:00',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'due-driven',
+            'total_seconds' => 72000,
+        ]);
+        $handler = app(StatusChangedHandler::class);
+
+        $resolved = $this->createStatusEvent($ticket, 'Open', 'Resolved', Carbon::parse('2026-09-01 09:00:00'));
+        $handler->handle($ticket->ticket_id, ['status' => 4], $resolved->field_changes, $resolved);
+
+        $closed = $this->createStatusEvent($ticket, 'Resolved', 'Closed', Carbon::parse('2026-09-01 10:00:00'));
+        $handler->handle($ticket->ticket_id, ['status' => 5], $closed->field_changes, $closed);
+
+        $reopened = $this->createStatusEvent($ticket, 'Closed', 'Processing', Carbon::parse('2026-09-01 11:00:00'));
+        $handler->handle($ticket->ticket_id, ['status' => 3], $reopened->field_changes, $reopened);
+
+        $this->assertSame(10800, $ticket->fresh()->getOrCreateStatusMetric()->resolution_total_seconds);
     }
 
     private function createStatusEvent(Ticket $ticket, string $oldStatus, string $newStatus, Carbon $timestamp): TicketEvent

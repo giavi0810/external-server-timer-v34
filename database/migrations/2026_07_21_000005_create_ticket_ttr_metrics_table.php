@@ -15,11 +15,17 @@ return new class extends Migration
             $table->unsignedInteger('used_seconds')->default(0);
             $table->string('processing_mode', 50)->default('priority-driven');
             $table->timestampTz('started_at')->nullable();
+            $table->timestampTz('mode_switched_at')->nullable();
+            $table->unsignedInteger('used_seconds_at_mode_switch')->nullable();
             $table->timestampTz('original_due_date_ttr')->nullable();
             $table->timestampTz('latest_due_date_ttr')->nullable();
             $table->timestampsTz();
 
             $table->foreign('ticket_id')->references('ticket_id')->on('tickets')->cascadeOnDelete();
+            $table->index(
+                ['processing_mode', 'latest_due_date_ttr', 'ticket_id'],
+                'ticket_ttr_overdue_scan_index'
+            );
         });
 
         if (DB::getDriverName() === 'pgsql') {

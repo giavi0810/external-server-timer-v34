@@ -212,7 +212,9 @@ class StatusChangedHandler
             }
         }
 
-        if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+        if (! $rtMetric->hasFirstResponse()
+            && ! in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'], true)
+            && $rtMetric->latest_due_date_rt) {
             $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
         }
 
@@ -251,7 +253,9 @@ class StatusChangedHandler
             }
         }
 
-        if (! $rtMetric->hasFirstResponse() && $rtMetric->latest_due_date_rt) {
+        if (! $rtMetric->hasFirstResponse()
+            && ! in_array($rtMetric->status, ['ended_replied', 'ended_closed_no_reply'], true)
+            && $rtMetric->latest_due_date_rt) {
             $rtMetric->latest_due_date_rt = Carbon::parse($rtMetric->latest_due_date_rt)->addSeconds($waitingDuration);
         }
 
@@ -283,6 +287,13 @@ class StatusChangedHandler
         if ($endStartedAt) {
             $closedDuration = max(0, $now->timestamp - $endStartedAt->timestamp);
             $statusMetric->end_total_seconds += $closedDuration;
+        }
+
+        if ($ttrMetric->processing_mode === 'due-driven') {
+            $unaccountedEndStartedAt = $endCycle['first_closed_at'] ?? $endStartedAt;
+            if ($unaccountedEndStartedAt) {
+                $this->timerService->addResolutionInterval($statusMetric, $unaccountedEndStartedAt, $now);
+            }
         }
 
         // Resolution runs continuously in every non-End status, including
@@ -320,6 +331,13 @@ class StatusChangedHandler
         if ($endStartedAt) {
             $closedDuration = max(0, $now->timestamp - $endStartedAt->timestamp);
             $statusMetric->end_total_seconds += $closedDuration;
+        }
+
+        if ($ttrMetric->processing_mode === 'due-driven') {
+            $unaccountedEndStartedAt = $endCycle['first_closed_at'] ?? $endStartedAt;
+            if ($unaccountedEndStartedAt) {
+                $this->timerService->addResolutionInterval($statusMetric, $unaccountedEndStartedAt, $now);
+            }
         }
 
         $statusMetric->resolution_started_at = $now;

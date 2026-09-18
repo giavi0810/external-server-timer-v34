@@ -8,7 +8,6 @@ use App\Models\TicketFirstResponseMetric;
 use App\Models\TicketGroupMetric;
 use App\Models\TicketTtrMetric;
 use App\Services\FreshdeskApiService;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class AppTimerSyncService
@@ -17,12 +16,16 @@ class AppTimerSyncService
 
     protected TimerService $timerService;
 
+    protected SlaComplianceService $complianceService;
+
     public function __construct(
         FreshdeskApiService $freshdeskService,
-        TimerService $timerService
+        TimerService $timerService,
+        SlaComplianceService $complianceService
     ) {
         $this->freshdeskService = $freshdeskService;
         $this->timerService = $timerService;
+        $this->complianceService = $complianceService;
     }
 
     /**
@@ -30,6 +33,7 @@ class AppTimerSyncService
      */
     public function syncTicket(Ticket $ticket): void
     {
+        $this->complianceService->captureCurrent($ticket);
         $data = $this->generateCompactJson($ticket);
         $jsonString = json_encode($data);
 
@@ -201,36 +205,13 @@ class AppTimerSyncService
 
         $rtUsed = $this->effectiveRtUsed($rtMetric);
         $rtTotal = max(0, (int) $rtMetric->total_seconds);
-        $rtOverdue = $rtUsed > $rtTotal
-            || (! $rtMetric->hasFirstResponse()
-                && $rtMetric->latest_due_date_rt
-                && now()->greaterThan($rtMetric->latest_due_date_rt));
+        $rtOverdue = $this->complianceService->currentRtOverdue($ticket);
         $rtDiff = $rtTotal - $rtUsed;
 
         $ttrUsed = $this->effectiveTtrUsed($ticket, $ttrMetric);
         $ttrTotal = max(0, (int) $ttrMetric->total_seconds);
 
-        // BR-EVL-02: Ticket-level evaluation occurs only when the ticket enters an End status (Resolved or Closed).
-        $ttrOverdue = false;
-        if ($ticket->isEnded()) {
-            if ($ttrMetric->processing_mode === 'due-driven') {
-                $firstEndAt = null;
-                if ($ticket->resolved_at && $ticket->closed_at) {
-                    $firstEndAt = Carbon::parse($ticket->resolved_at)->lessThan(Carbon::parse($ticket->closed_at))
-                        ? $ticket->resolved_at
-                        : $ticket->closed_at;
-                } else {
-                    $firstEndAt = $ticket->resolved_at ?? $ticket->closed_at ?? now();
-                }
-
-                $dueAt = $ttrMetric->latest_due_date_ttr
-                    ? Carbon::parse($ttrMetric->latest_due_date_ttr)
-                    : null;
-                $ttrOverdue = $dueAt && Carbon::parse($firstEndAt)->greaterThan($dueAt);
-            } else {
-                $ttrOverdue = $ttrUsed > $ttrTotal;
-            }
-        }
+        $ttrOverdue = $this->complianceService->currentTtrOverdue($ticket);
 
         $ttrDiff = $ttrTotal - $ttrUsed;
 
@@ -239,6 +220,10 @@ class AppTimerSyncService
             'cf_rt_overdue' => $rtOverdue ? 'Yes' : 'No',
             'cf_ttr_time' => (string) $ttrDiff,
             'cf_ttr_overdue' => $ttrOverdue ? 'Yes' : 'No',
+            'cf_sla_violated' => $ticket->sla_violated ? 'Fail' : 'Pass',
+            'cf_final_sla_compliance' => $ticket->final_sla_compliant === null
+                ? null
+                : ($ticket->final_sla_compliant ? 'Pass' : 'Fail'),
             'cf_processing_mode' => $ttrMetric->processing_mode,
         ];
 

@@ -251,8 +251,10 @@ class ReleaseOneSafetyFixesTest extends TestCase
         $initialization->shouldReceive('ensureSlaInitialized')->once();
         $timeline = Mockery::mock(TimelineService::class);
         $timeline->shouldReceive('appendTicketEventLog')->once();
+        $timerService = Mockery::mock(TimerService::class)->shouldIgnoreMissing();
+        $timerService->shouldReceive('calculateTtrUsedSeconds')->once()->andReturn(0);
         $handler = new DueDateChangedHandler(
-            Mockery::mock(TimerService::class),
+            $timerService,
             $initialization,
             $timeline,
             Mockery::mock(SlaStageService::class)

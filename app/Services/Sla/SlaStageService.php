@@ -21,23 +21,15 @@ class SlaStageService
             ->latest('sequence_number')
             ->first();
 
-        if (!$stage) {
+        if (! $stage) {
             return null;
         }
 
         $ttrMetric = $ticket->getOrCreateTtrMetric();
         $rtMetric = $ticket->getOrCreateFirstResponseMetric();
 
-        $statusMetric = $ticket->getOrCreateStatusMetric();
-        $pauseSeconds = (int) (($statusMetric->waiting_total_seconds ?? 0) + ($statusMetric->pending_total_seconds ?? 0));
-        if ($statusMetric->waiting_started_at && $checkpointAt->greaterThan($statusMetric->waiting_started_at)) {
-            $pauseSeconds += $checkpointAt->timestamp - Carbon::parse($statusMetric->waiting_started_at)->timestamp;
-        }
-        if ($statusMetric->pending_started_at && $checkpointAt->greaterThan($statusMetric->pending_started_at)) {
-            $pauseSeconds += $checkpointAt->timestamp - Carbon::parse($statusMetric->pending_started_at)->timestamp;
-        }
-
         $isDueDriven = $stage->processing_mode === 'due-driven';
+        $pauseSecondsByEvaluationAt = [];
 
         foreach ($stage->metrics as $metric) {
             if (in_array($metric->metric_result, ['fail', 'not_applicable'], true)) {
@@ -48,6 +40,9 @@ class SlaStageService
             $evaluationAt = $metric->metric_type === 'rt' && $rtMetric->first_response_at
                 ? Carbon::parse($rtMetric->first_response_at)
                 : $checkpointAt;
+            $evaluationKey = $evaluationAt->utc()->format('Y-m-d H:i:s.u');
+            $pauseSeconds = $pauseSecondsByEvaluationAt[$evaluationKey]
+                ??= $this->pauseSecondsDuringStage($ticket, $stage, $event, $evaluationAt);
 
             $usedSeconds = $metric->metric_type === 'ttr'
                 ? (int) $ttrMetric->used_seconds
@@ -61,6 +56,7 @@ class SlaStageService
 
             if ($isDueDriven && $metric->metric_type === 'ttr') {
                 $failed = $dueAt && $evaluationAt->greaterThan($dueAt);
+                $overdueAt = $dueAt;
             } else {
                 // Tuân thủ BR-EVL-01 (CAL-STAGE-RESULT & CAL-RT-RESULT):
                 // 1. Quá hạn ngân sách SLA: used_seconds > effective_sla (used = goal thì chưa overdue)
@@ -69,15 +65,16 @@ class SlaStageService
                 $exceededDue = $effectiveDueAt && $evaluationAt->greaterThan($effectiveDueAt);
 
                 $failed = $exceededSla || $exceededDue;
+                $overdueAt = $effectiveDueAt ?? $dueAt ?? $checkpointAt;
             }
 
             $metric->update([
                 'used_at_checkpoint_seconds' => $usedSeconds,
                 'metric_result' => ($dueAt || $effectiveSla > 0) ? ($failed ? 'fail' : 'pass') : 'not_applicable',
                 'result_reason' => ($dueAt || $effectiveSla > 0)
-                    ? $context . ($failed ? '_after_due' : '_before_due')
+                    ? $context.($failed ? '_after_due' : '_before_due')
                     : 'due_date_not_available',
-                'overdue_at' => $failed ? ($effectiveDueAt ?? $dueAt ?? $checkpointAt) : null,
+                'overdue_at' => $failed ? $overdueAt : null,
                 'overdue_owner_group_id' => $failed ? $ticket->group_id : null,
             ]);
         }
@@ -88,5 +85,88 @@ class SlaStageService
         ]);
 
         return $stage;
+    }
+
+    private function pauseSecondsDuringStage(
+        Ticket $ticket,
+        TicketSlaStage $stage,
+        TicketEvent $checkpointEvent,
+        Carbon $checkpointAt
+    ): int {
+        $openedAt = Carbon::parse($stage->opened_at);
+        if ($checkpointAt->lessThanOrEqualTo($openedAt)) {
+            return 0;
+        }
+
+        $openedEvent = $stage->openedByEvent()->first();
+        $statusEvents = TicketEvent::query()
+            ->where('ticket_id', $ticket->ticket_id)
+            ->where('event_type', TicketEvent::EVENT_STATUS_CHANGED)
+            ->whereBetween('event_timestamp', [$openedAt, $checkpointAt])
+            ->orderBy('event_timestamp')
+            ->orderBy('source_order_key')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (TicketEvent $statusEvent): bool => (! $openedEvent || $this->compareEventOrder($statusEvent, $openedEvent) > 0)
+                && $this->compareEventOrder($statusEvent, $checkpointEvent) <= 0
+            )
+            ->values();
+
+        $status = data_get($openedEvent?->event_data, 'ticket_data.status');
+        if (! $status && $statusEvents->isNotEmpty()) {
+            $firstChange = collect($statusEvents->first()->getFieldChanges())
+                ->firstWhere('field', 'status');
+            $status = $firstChange['old_value'] ?? null;
+        }
+        $status ??= $ticket->status;
+
+        $pauseSeconds = 0;
+        $cursor = $openedAt;
+
+        foreach ($statusEvents as $statusEvent) {
+            $changedAt = Carbon::parse($statusEvent->event_timestamp);
+            if ($changedAt->lessThan($cursor)) {
+                continue;
+            }
+
+            if ($this->isPauseStatus($status)) {
+                $pauseSeconds += max(0, $changedAt->timestamp - $cursor->timestamp);
+            }
+
+            $change = collect($statusEvent->getFieldChanges())->firstWhere('field', 'status');
+            $status = $change['new_value'] ?? $status;
+            $cursor = $changedAt;
+        }
+
+        if ($this->isPauseStatus($status)) {
+            $pauseSeconds += max(0, $checkpointAt->timestamp - $cursor->timestamp);
+        }
+
+        return $pauseSeconds;
+    }
+
+    private function compareEventOrder(TicketEvent $left, TicketEvent $right): int
+    {
+        $timestampComparison = strcmp(
+            Carbon::parse($left->event_timestamp)->utc()->format('Y-m-d H:i:s.u'),
+            Carbon::parse($right->event_timestamp)->utc()->format('Y-m-d H:i:s.u')
+        );
+        if ($timestampComparison !== 0) {
+            return $timestampComparison;
+        }
+
+        $sourceComparison = strcmp(
+            (string) ($left->source_order_key ?? ''),
+            (string) ($right->source_order_key ?? '')
+        );
+
+        return $sourceComparison !== 0
+            ? $sourceComparison
+            : ((int) $left->id <=> (int) $right->id);
+    }
+
+    private function isPauseStatus(mixed $status): bool
+    {
+        return in_array((string) $status, config('freshdesk.pause_statuses', []), true);
     }
 }

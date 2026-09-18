@@ -23,6 +23,10 @@ return new class extends Migration
             $table->timestampTz('resolved_at')->nullable();
             $table->timestampTz('closed_at')->nullable();
             $table->timestampTz('reopened_at')->nullable();
+            $table->boolean('sla_violated')->default(false);
+            $table->timestampTz('sla_violated_at')->nullable();
+            $table->string('sla_violation_metric', 10)->nullable();
+            $table->boolean('final_sla_compliant')->nullable();
             $table->timestampsTz();
 
             $table->foreign('group_id')->references('group_id')->on('freshdesk_groups')->nullOnDelete();
@@ -37,6 +41,7 @@ return new class extends Migration
         if (DB::getDriverName() === 'pgsql') {
             DB::statement("ALTER TABLE tickets ADD CONSTRAINT tickets_creation_reason_check CHECK (creation_reason IN ('freshdesk_created', 'requester_reply_after_7_days'))");
             DB::statement("ALTER TABLE tickets ADD CONSTRAINT tickets_priority_check CHECK (priority IN ('Urgent', 'High', 'Medium', 'Low'))");
+            DB::statement("ALTER TABLE tickets ADD CONSTRAINT tickets_sla_violation_metric_check CHECK (sla_violation_metric IS NULL OR sla_violation_metric IN ('rt', 'ttr', 'both'))");
             DB::statement('ALTER TABLE tickets ADD CONSTRAINT tickets_source_check CHECK (source_ticket_id IS NULL OR source_ticket_id <> ticket_id)');
             DB::statement('CREATE INDEX tickets_source_ticket_id_index ON tickets (source_ticket_id) WHERE source_ticket_id IS NOT NULL');
         }
