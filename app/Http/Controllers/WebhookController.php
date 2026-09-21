@@ -206,13 +206,11 @@ class WebhookController extends Controller
                 }
             }
 
-            $isDueDriven = ($processingModeFromWebhook === 'due-driven');
-
             if ($processingModeFromWebhook !== null) {
-                Log::info("WebhookController: Detected Processing Mode", [
+                Log::info("WebhookController: Observed Processing Mode", [
                     'ticket_id' => $ticketId,
                     'processing_mode' => $processingModeFromWebhook,
-                    'is_due_driven' => $isDueDriven
+                    'mode_transition_deferred' => true,
                 ]);
             }
 
@@ -236,20 +234,6 @@ class WebhookController extends Controller
                 );
 
                 $ticket->refresh();
-                if ($processingModeFromWebhook !== null) {
-                    $ticket->getOrCreateTtrMetric()->update([
-                        'processing_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
-                    ]);
-                }
-            } elseif ($ticket && $processingModeFromWebhook !== null && $shouldApplySnapshot) {
-                $ticket->getOrCreateTtrMetric()->update([
-                    'processing_mode' => $isDueDriven ? 'due-driven' : 'priority-driven',
-                ]);
-
-                Log::info("WebhookController: Updated only due-driven flag", [
-                    'ticket_id' => $ticketId,
-                    'flag' => $isDueDriven
-                ]);
             }
 
             if ($ticket) {
