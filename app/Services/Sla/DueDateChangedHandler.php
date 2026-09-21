@@ -18,9 +18,9 @@ use Carbon\Carbon;
  * DueDateChangedHandler — Xử lý sự kiện thay đổi Due Date.
  *
  * Đặc tả 2.2.3 (Change due date):
- * Hai chế độ:
- * 1. Agent thay đổi trên Freshdesk → cập nhật L4 với thời gian tăng thêm
- * 2. Submit từ App Timer → TTR = SLA_priority + (new_due_app - old_due_immediate)
+ * - Ticket khởi tạo ở priority-driven.
+ * - Chỉ request Change Due Date từ App Timer mới chuyển sang due-driven.
+ * - due-driven là trạng thái cuối và không thể quay lại priority-driven.
  *
  * Sau change due date:
  * - Đánh dấu processing_mode = due-driven
@@ -100,6 +100,19 @@ class DueDateChangedHandler
         $newDue = Carbon::parse($newDueRaw);
         $dueChanged = !$oldDue || !$oldDue->equalTo($newDue);
 
+        if (! $dueChanged) {
+            if ($ticket->isDirty()) {
+                $ticket->save();
+            }
+
+            Log::info('DueDateChangedHandler: bỏ qua vì due_by không đổi', [
+                'ticket_id' => $ticketId,
+                'due_by' => $newDue->toIso8601String(),
+            ]);
+
+            return;
+        }
+
         $newFrDueRaw = $ticketData['fr_due_by']
             ?? ($ticketData['frDueBy'] ?? null)
             ?? (collect($changes)->firstWhere('field', 'fr_due_by')['new_value'] ?? null)
@@ -134,9 +147,20 @@ class DueDateChangedHandler
             $changes,
             $ttrMetric->processing_mode
         );
-        $nextProcessingMode = ($incomingProcessingMode === 'priority-driven')
-            ? 'priority-driven'
-            : 'due-driven';
+        $appDueDateOperation = $incomingProcessingMode === 'due-driven'
+            ? $this->findAppDueDateOperation($ticketId, $newDue)
+            : null;
+        $isAppDueDateChange = $appDueDateOperation !== null;
+        $nextProcessingMode = $previousProcessingMode === 'due-driven' || $isAppDueDateChange
+            ? 'due-driven'
+            : 'priority-driven';
+
+        if ($incomingProcessingMode === 'due-driven' && ! $isAppDueDateChange) {
+            Log::info('DueDateChangedHandler: giữ priority-driven vì không có lệnh Change Due Date từ App', [
+                'ticket_id' => $ticketId,
+                'new_due' => $newDue->toIso8601String(),
+            ]);
+        }
 
         if ($previousProcessingMode === 'priority-driven' && $nextProcessingMode === 'due-driven') {
             // Snapshot the old formula before changing mode. This prevents
@@ -148,10 +172,6 @@ class DueDateChangedHandler
             $ttrMetric->used_seconds = $usedAtModeSwitch;
             $ttrMetric->used_seconds_at_mode_switch = $usedAtModeSwitch;
             $ttrMetric->mode_switched_at = $eventAt;
-        } elseif ($nextProcessingMode === 'priority-driven') {
-            // A later transition to due-driven must capture a fresh baseline.
-            $ttrMetric->used_seconds_at_mode_switch = null;
-            $ttrMetric->mode_switched_at = null;
         }
 
         $ttrMetric->processing_mode = $nextProcessingMode;
@@ -162,29 +182,20 @@ class DueDateChangedHandler
         $this->recalculateSlaOnDueDateChange($ticket, $oldDue, $newDue, $eventAt, $calculationPolicy, $ttrMetric, $rtMetric);
 
         $ticket->save();
-        if ($dueChanged) {
-            $this->recordDueDateStage(
-                $ticket,
-                $event,
-                $oldDue,
-                $newDue,
-                $eventAt,
-                $customFields,
-                $ttrMetric->processing_mode,
-                $calculationPolicy,
-                $ttrMetric,
-                $rtMetric
-            );
-        } else {
-            Log::info('DueDateChangedHandler: bỏ qua stage vì due_by không đổi', [
-                'ticket_id' => $ticketId,
-                'due_by' => $newDue->toIso8601String(),
-            ]);
-        }
+        $this->recordDueDateStage(
+            $ticket,
+            $event,
+            $oldDue,
+            $newDue,
+            $eventAt,
+            $customFields,
+            $ttrMetric->processing_mode,
+            $calculationPolicy,
+            $ttrMetric,
+            $rtMetric
+        );
 
-        if ($dueChanged) {
-            $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
-        }
+        $this->timelineService->appendTicketEventLog($ticket, 'd', $newDue->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
 
         if ($rtMetric->latest_due_date_rt) {
             $this->timelineService->appendTicketEventLog($ticket, 'fr', $rtMetric->latest_due_date_rt->format('Y-m-d\TH:i:s\Z'), $event->event_timestamp, null, $event);
@@ -197,11 +208,38 @@ class DueDateChangedHandler
         ]);
     }
 
+    private function findAppDueDateOperation(int $ticketId, Carbon $newDue): ?FreshdeskOutboundOperation
+    {
+        return FreshdeskOutboundOperation::query()
+            ->where('ticket_id', $ticketId)
+            ->where('operation_type', 'change_due_date')
+            ->latest('created_at')
+            ->cursor()
+            ->first(function (FreshdeskOutboundOperation $operation) use ($newDue): bool {
+                $operationDue = $operation->payload['new_due_date'] ?? null;
+                if (! is_string($operationDue) || trim($operationDue) === '') {
+                    return false;
+                }
+
+                try {
+                    return Carbon::parse($operationDue)->utc()->equalTo($newDue->copy()->utc());
+                } catch (\Throwable) {
+                    return false;
+                }
+            });
+    }
+
     private function resolveProcessingModeBeforeEvent(
         Ticket $ticket,
         array $changes,
         string $storedMode
     ): string {
+        // due-driven is a terminal mode. No later webhook or snapshot may
+        // move the ticket back to priority-driven.
+        if ($storedMode === 'due-driven') {
+            return 'due-driven';
+        }
+
         $modeChange = collect($changes)->first(function (array $change): bool {
             $field = (string) ($change['field'] ?? '');
 

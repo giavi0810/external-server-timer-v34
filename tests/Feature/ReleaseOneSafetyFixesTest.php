@@ -225,6 +225,7 @@ class ReleaseOneSafetyFixesTest extends TestCase
             'processing_mode' => 'priority-driven',
             'latest_due_date_ttr' => '2026-08-05T08:00:00Z',
         ]);
+        $this->appDueDateOperation($ticket, '2026-08-04T08:00:00Z', 'mode-transition');
         $event = TicketEvent::create([
             'ticket_id' => $ticket->ticket_id,
             'idempotency_key' => hash('sha256', 'due-driven-event'),
@@ -265,6 +266,143 @@ class ReleaseOneSafetyFixesTest extends TestCase
         $this->assertSame('due-driven', $ticket->getOrCreateTtrMetric()->fresh()->processing_mode);
     }
 
+    public function test_non_app_due_date_change_keeps_priority_driven_mode(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 18326,
+            'status' => 'Open',
+            'priority' => 'High',
+            'ticket_type' => 'NO_POLICY',
+            'fd_created_at' => '2026-09-21T02:08:49Z',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'priority-driven',
+            'total_seconds' => 1209600,
+            'latest_due_date_ttr' => '2026-10-05T02:08:49Z',
+        ]);
+        $event = $this->dueDateEvent(
+            $ticket,
+            'priority-derived-due-date',
+            '2026-10-05T02:08:49Z',
+            '2026-09-22T02:08:50Z'
+        );
+
+        app(DueDateChangedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event->getFieldChanges(),
+            $event
+        );
+
+        $metric = $ticket->getOrCreateTtrMetric()->fresh();
+        $this->assertSame('priority-driven', $metric->processing_mode);
+        $this->assertSame('2026-09-22T02:08:50+00:00', $metric->latest_due_date_ttr->toIso8601String());
+        $this->assertNull($metric->mode_switched_at);
+    }
+
+    public function test_due_driven_marker_without_matching_app_operation_does_not_switch_mode(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 18327,
+            'status' => 'Open',
+            'priority' => 'High',
+            'ticket_type' => 'NO_POLICY',
+            'fd_created_at' => '2026-09-21T02:08:49Z',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'priority-driven',
+            'latest_due_date_ttr' => '2026-09-22T02:08:49Z',
+        ]);
+        $event = $this->dueDateEvent(
+            $ticket,
+            'untrusted-due-driven-marker',
+            '2026-09-22T02:08:49Z',
+            '2026-09-23T02:08:49Z',
+            'due-driven'
+        );
+
+        app(DueDateChangedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event->getFieldChanges(),
+            $event
+        );
+
+        $this->assertSame('priority-driven', $ticket->getOrCreateTtrMetric()->fresh()->processing_mode);
+    }
+
+    public function test_noop_app_due_date_change_does_not_switch_mode_or_recalculate(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 18328,
+            'status' => 'Open',
+            'priority' => 'High',
+            'ticket_type' => 'NO_POLICY',
+            'fd_created_at' => '2026-09-21T02:08:49Z',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'priority-driven',
+            'total_seconds' => 86400,
+            'latest_due_date_ttr' => '2026-09-22T02:08:49Z',
+        ]);
+        $this->appDueDateOperation($ticket, '2026-09-22T02:08:49Z', 'noop');
+        $event = $this->dueDateEvent(
+            $ticket,
+            'noop-app-due-date',
+            '2026-09-22T02:08:49Z',
+            '2026-09-22T02:08:49Z',
+            'due-driven'
+        );
+
+        app(DueDateChangedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event->getFieldChanges(),
+            $event
+        );
+
+        $metric = $ticket->getOrCreateTtrMetric()->fresh();
+        $this->assertSame('priority-driven', $metric->processing_mode);
+        $this->assertSame(86400, $metric->total_seconds);
+        $this->assertDatabaseCount('ticket_sla_stages', 0);
+    }
+
+    public function test_due_driven_mode_is_terminal(): void
+    {
+        $ticket = Ticket::create([
+            'ticket_id' => 18329,
+            'status' => 'Open',
+            'priority' => 'High',
+            'ticket_type' => 'NO_POLICY',
+            'fd_created_at' => '2026-09-21T02:08:49Z',
+        ]);
+        $ticket->getOrCreateTtrMetric()->update([
+            'processing_mode' => 'due-driven',
+            'latest_due_date_ttr' => '2026-09-22T02:08:49Z',
+            'mode_switched_at' => '2026-09-21T03:00:00Z',
+            'used_seconds_at_mode_switch' => 3000,
+        ]);
+        $event = $this->dueDateEvent(
+            $ticket,
+            'attempted-mode-downgrade',
+            '2026-09-22T02:08:49Z',
+            '2026-09-23T02:08:49Z',
+            'priority-driven'
+        );
+
+        app(DueDateChangedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event->getFieldChanges(),
+            $event
+        );
+
+        $metric = $ticket->getOrCreateTtrMetric()->fresh();
+        $this->assertSame('due-driven', $metric->processing_mode);
+        $this->assertNotNull($metric->mode_switched_at);
+        $this->assertSame(3000, $metric->used_seconds_at_mode_switch);
+    }
+
     public function test_due_date_stage_records_custom_fields_from_event_payload(): void
     {
         SlaPolicy::create([
@@ -291,6 +429,7 @@ class ReleaseOneSafetyFixesTest extends TestCase
             'latest_due_date_ttr' => '2026-08-02T10:47:22Z',
             'total_seconds' => 28800,
         ]);
+        $this->appDueDateOperation($ticket, '2026-08-08T16:59:00Z', 'stage-custom-fields');
 
         $event = TicketEvent::create([
             'ticket_id' => $ticket->ticket_id,
@@ -336,6 +475,54 @@ class ReleaseOneSafetyFixesTest extends TestCase
         $change = TicketDueDateChange::query()->where('ticket_id', $ticket->ticket_id)->firstOrFail();
         $this->assertSame('Investigation', $change->processing_phase);
         $this->assertSame('Phase changed', $change->reason_code);
+    }
+
+    private function appDueDateOperation(Ticket $ticket, string $newDueDate, string $key): FreshdeskOutboundOperation
+    {
+        return FreshdeskOutboundOperation::create([
+            'operation_id' => (string) Str::uuid(),
+            'idempotency_key' => "change-due-date:{$key}",
+            'ticket_id' => $ticket->ticket_id,
+            'operation_type' => 'change_due_date',
+            'coalesce_key' => 'change_due_date',
+            'generation' => 0,
+            'sync_epoch' => 0,
+            'operation_version' => 1,
+            'payload' => ['new_due_date' => $newDueDate],
+            'state' => 'completed',
+            'available_at' => now(),
+            'completed_at' => now(),
+        ]);
+    }
+
+    private function dueDateEvent(
+        Ticket $ticket,
+        string $key,
+        string $oldDue,
+        string $newDue,
+        ?string $processingMode = null
+    ): TicketEvent {
+        $customFields = $processingMode === null
+            ? []
+            : ['cf_processing_mode' => $processingMode];
+
+        return TicketEvent::create([
+            'ticket_id' => $ticket->ticket_id,
+            'idempotency_key' => hash('sha256', $key),
+            'event_type' => TicketEvent::EVENT_DUE_DATE_CHANGED,
+            'event_data' => ['ticket_data' => [
+                'due_by' => $newDue,
+                'custom_fields' => $customFields,
+            ]],
+            'field_changes' => [[
+                'field' => 'due_by',
+                'old_value' => $oldDue,
+                'new_value' => $newDue,
+            ]],
+            'status' => TicketEvent::STATUS_PROCESSING,
+            'event_timestamp' => '2026-09-21T03:00:00Z',
+            'received_at' => now(),
+        ]);
     }
 
     private function event(Ticket $ticket, string $key, string $occurredAt): TicketEvent
