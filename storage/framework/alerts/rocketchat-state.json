@@ -23,29 +23,22 @@
         "805f04b4a2a793ebd12d2cabfc69b8f3a61347dd": {
             "lookup_code": "EVT-20260914-091204-DWZNUT",
             "first_detected_at": 1789351924,
-            "last_detected_at": 1789957984,
-            "occurrence_count": 2852,
+            "last_detected_at": 1790045044,
+            "occurrence_count": 4303,
             "last_sent_at": null
         },
         "535b9ac8a061a13fe5000b22c2bfdb070e12beb1": {
             "lookup_code": "EVT-20260914-091204-PJDBG0",
             "first_detected_at": 1789351924,
-            "last_detected_at": 1789957984,
-            "occurrence_count": 2852,
-            "last_sent_at": null
-        },
-        "5b0bac0784438a94a678f39084541de39824985e": {
-            "lookup_code": "EVT-20260914-101401-ZHFGSI",
-            "first_detected_at": 1789355641,
-            "last_detected_at": 1789355822,
-            "occurrence_count": 4,
+            "last_detected_at": 1790045044,
+            "occurrence_count": 4303,
             "last_sent_at": null
         },
         "6c8540d2377af1e5d6cad4f300e4ee71bd4fdd5e": {
             "lookup_code": "EVT-20260914-101801-BJSEFV",
             "first_detected_at": 1789355881,
-            "last_detected_at": 1789957981,
-            "occurrence_count": 2786,
+            "last_detected_at": 1790045041,
+            "occurrence_count": 4237,
             "last_sent_at": null
         }
     },

@@ -7,6 +7,7 @@ use App\Models\Ticket;
 use App\Models\TicketEvent;
 use App\Models\TicketSlaStage;
 use App\Models\TicketSlaStageMetric;
+use App\Services\FreshdeskApiService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -19,7 +20,8 @@ class PriorityChangedHandler
     public function __construct(
         private readonly SlaInitializationService $initService,
         private readonly TimelineService $timelineService,
-        private readonly SlaStageService $stageService
+        private readonly SlaStageService $stageService,
+        private readonly FreshdeskApiService $freshdeskService
     ) {
     }
 
@@ -136,6 +138,10 @@ class PriorityChangedHandler
                     $direction,
                     $changedAt
                 );
+            }
+
+            if ($direction === 'downgrade' && $this->firstFailedMetric($ticket, 'ttr')) {
+                $this->freshdeskService->addTagToTicket($ticket->ticket_id, 'has_stage_fail_SLA');
             }
         }
 
