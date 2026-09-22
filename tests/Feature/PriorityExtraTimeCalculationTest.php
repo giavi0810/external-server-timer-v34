@@ -9,6 +9,7 @@ use App\Models\TicketDueDateChange;
 use App\Models\TicketEvent;
 use App\Models\TicketSlaStage;
 use App\Models\TicketSlaStageMetric;
+use App\Services\FreshdeskApiService;
 use App\Services\Sla\AppTimerSyncService;
 use App\Services\Sla\PriorityChangedHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -134,6 +135,36 @@ class PriorityExtraTimeCalculationTest extends TestCase
         $this->assertSame('not_applicable', $metric->eligibility_status);
         $this->assertSame(3000, $metric->effective_sla_seconds);
         $this->assertSame('2026-08-10T09:00:00+00:00', $metric->adjusted_due_at->toIso8601String());
+    }
+
+    public function test_downgrade_after_ttr_stage_failure_adds_has_stage_fail_sla_tag(): void
+    {
+        [$ticket, $event] = $this->priorityScenario(
+            oldPriority: 'Urgent',
+            newPriority: 'High',
+            oldTtrGoal: 2400,
+            newTtrGoal: 3600,
+            ttrUsed: 2400,
+            oldRtGoal: 1200,
+            newRtGoal: 1800,
+            rtUsed: 300,
+            oldTtrDue: '2026-08-10T08:05:00Z',
+            oldRtDue: '2026-08-10T08:20:00Z',
+            changedAt: '2026-08-10T08:10:00Z'
+        );
+
+        $freshdesk = $this->mock(FreshdeskApiService::class);
+        $freshdesk->shouldReceive('addTagToTicket')
+            ->once()
+            ->with($ticket->ticket_id, 'has_stage_fail_SLA')
+            ->andReturnTrue();
+
+        app(PriorityChangedHandler::class)->handle(
+            $ticket->ticket_id,
+            $event->getTicketData(),
+            $event->getFieldChanges(),
+            $event
+        );
     }
 
     public function test_due_driven_and_completed_first_response_are_recorded_without_extra_time(): void
