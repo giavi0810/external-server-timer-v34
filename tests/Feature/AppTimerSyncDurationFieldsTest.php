@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Ticket;
 use App\Services\Sla\AppTimerSyncService;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -11,6 +12,19 @@ use Tests\TestCase;
 class AppTimerSyncDurationFieldsTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_freshdesk_fail_time_is_formatted_in_configured_timezone(): void
+    {
+        config(['freshdesk.timezone' => 'Asia/Ho_Chi_Minh']);
+
+        $method = new ReflectionMethod(AppTimerSyncService::class, 'formatFreshdeskDateTime');
+        $formatted = $method->invoke(
+            app(AppTimerSyncService::class),
+            CarbonImmutable::parse('2026-09-21T04:02:13Z')
+        );
+
+        $this->assertSame('2026-09-21T11:02:13+07:00', $formatted);
+    }
 
     public function test_freshdesk_duration_fields_are_second_strings(): void
     {
