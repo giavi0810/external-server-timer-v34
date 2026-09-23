@@ -139,10 +139,6 @@ class PriorityChangedHandler
                     $changedAt
                 );
             }
-
-            if ($direction === 'downgrade' && $this->firstFailedMetric($ticket, 'ttr')) {
-                $this->freshdeskService->addTagToTicket($ticket->ticket_id, 'has_stage_fail_SLA');
-            }
         }
 
         $ticket->priority = $newPriority;

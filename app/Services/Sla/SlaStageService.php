@@ -5,10 +5,19 @@ namespace App\Services\Sla;
 use App\Models\Ticket;
 use App\Models\TicketEvent;
 use App\Models\TicketSlaStage;
+use App\Services\FreshdeskApiService;
 use Carbon\Carbon;
 
 class SlaStageService
 {
+    protected FreshdeskApiService $freshdeskService;
+
+    public function __construct(
+        ?FreshdeskApiService $freshdeskService = null
+    ) {
+        $this->freshdeskService = $freshdeskService ?? app(FreshdeskApiService::class);
+    }
+
     public function checkpointOpenStage(
         Ticket $ticket,
         TicketEvent $event,
@@ -83,6 +92,10 @@ class SlaStageService
             'checkpoint_at' => $checkpointAt,
             'checkpoint_event_id' => $event->id,
         ]);
+
+        if ($stage->metrics()->where('metric_result', 'fail')->exists()) {
+            $this->freshdeskService->addTagToTicket($ticket->ticket_id, 'has_stage_fail_SLA');
+        }
 
         return $stage;
     }
