@@ -10,6 +10,7 @@ return [
 
     'domain' => env('FRESHDESK_DOMAIN'),
     'api_key' => env('FRESHDESK_API_KEY'),
+    'timezone' => env('FRESHDESK_TIMEZONE', 'Asia/Ho_Chi_Minh'),
 
     'api_rate_limit' => [
         'enabled' => filter_var(env('FRESHDESK_API_RATE_LIMIT_ENABLED', true), FILTER_VALIDATE_BOOL),
